@@ -1,7 +1,7 @@
 """
 Bridge Module
 
-The main Bridge class that orchestrates the Zync server.
+The main Bridge class that orchestrates the Zynk server.
 Handles FastAPI setup, routing, hot-reloading, and TypeScript generation.
 """
 
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 def setup_logging(level: int = logging.INFO, debug: bool = False) -> None:
-    """Configure logging for Zync."""
+    """Configure logging for Zynk."""
     root_logger = logging.getLogger()
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
@@ -59,7 +59,7 @@ def setup_logging(level: int = logging.INFO, debug: bool = False) -> None:
 
 class Bridge:
     """
-    The main Zync server class.
+    The main Zynk server class.
 
     Wraps FastAPI and Uvicorn to provide:
     - Automatic command routing
@@ -68,7 +68,7 @@ class Bridge:
     - Channel/streaming support
 
     Usage:
-        from zync import Bridge
+        from zynk import Bridge
         import users  # Side-effect import registers commands
 
         app = Bridge(
@@ -87,7 +87,7 @@ class Bridge:
         host: str = "127.0.0.1",
         port: int = 8000,
         cors_origins: list[str] | None = None,
-        title: str = "Zync API",
+        title: str = "Zynk API",
         debug: bool = False,
     ):
         """
@@ -388,7 +388,7 @@ Commands:   {len(commands)}"""
             command_modules = set()
             for cmd in commands.values():
                 module_name = cmd.module
-                if not module_name.startswith("zync"):
+                if not module_name.startswith("zynk"):
                     command_modules.add(module_name)
 
             from . import server
@@ -403,7 +403,7 @@ Commands:   {len(commands)}"""
             )
 
             uvicorn.run(
-                "zync.server:create_app",
+                "zynk.server:create_app",
                 host=self.host,
                 port=self.port,
                 reload=True,

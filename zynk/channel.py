@@ -1,7 +1,7 @@
 """
 Channel Module
 
-Provides streaming support for Zync commands via Server-Sent Events (SSE).
+Provides streaming support for Zynk commands via Server-Sent Events (SSE).
 Allows Python functions to send multiple updates to the frontend over time.
 """
 
@@ -59,7 +59,7 @@ class Channel(Generic[T]):
                 await channel.send(DataPoint(value=i))
                 await asyncio.sleep(0.1)
 
-    The channel is automatically created and managed by Zync.
+    The channel is automatically created and managed by Zynk.
     """
 
     def __init__(self, channel_id: str | None = None):

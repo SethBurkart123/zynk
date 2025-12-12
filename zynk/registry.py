@@ -1,7 +1,7 @@
 """
 Command Registry Module
 
-Provides the @command decorator and global registry for Zync commands.
+Provides the @command decorator and global registry for Zynk commands.
 Commands are registered automatically when decorated, enabling zero-config setup.
 """
 
@@ -48,7 +48,7 @@ class CommandInfo:
 
 class CommandRegistry:
     """
-    Global registry for all Zync commands.
+    Global registry for all Zynk commands.
 
     Maintains a flat namespace of commands and ensures no duplicates.
     Collects Pydantic models used in command signatures for TS generation.
@@ -149,7 +149,7 @@ _registry = CommandRegistry.get_instance()
 
 def command(func: Callable = None, *, name: str | None = None) -> Callable:
     """
-    Decorator to register a function as a Zync command.
+    Decorator to register a function as a Zynk command.
 
     Usage:
         @command
@@ -227,7 +227,7 @@ def command(func: Callable = None, *, name: str | None = None) -> Callable:
                 loop = asyncio.get_event_loop()
                 return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
 
-        async_wrapper._zync_command = cmd_info
+        async_wrapper._zynk_command = cmd_info
         return async_wrapper
 
     if func is not None:

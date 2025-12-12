@@ -19,7 +19,7 @@ from fastapi import FastAPI
 logger = logging.getLogger(__name__)
 
 # Environment variable name for passing config between processes
-_CONFIG_ENV_VAR = "ZYNC_SERVER_CONFIG"
+_CONFIG_ENV_VAR = "ZYNK_SERVER_CONFIG"
 
 
 def set_config(
@@ -27,7 +27,7 @@ def set_config(
     host: str = "127.0.0.1",
     port: int = 8000,
     cors_origins: list[str] | None = None,
-    title: str = "Zync API",
+    title: str = "Zynk API",
     debug: bool = False,
     main_module: str | None = None,
     import_modules: list[str] | None = None,
@@ -63,7 +63,7 @@ def get_config() -> dict[str, Any]:
         "host": "127.0.0.1",
         "port": 8000,
         "cors_origins": ["*"],
-        "title": "Zync API",
+        "title": "Zynk API",
         "debug": False,
         "main_module": None,
         "import_modules": [],
@@ -103,7 +103,7 @@ def create_app() -> FastAPI:
         host=config.get("host", "127.0.0.1"),
         port=config.get("port", 8000),
         cors_origins=config.get("cors_origins"),
-        title=config.get("title", "Zync API"),
+        title=config.get("title", "Zynk API"),
         debug=config.get("debug", False),
     )
 

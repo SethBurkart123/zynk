@@ -1,19 +1,19 @@
-# Zync
+# Zynk
 
 **A modern Python-TypeScript bridge with automatic type generation and hot-reloading.**
 
-Zync creates a seamless developer experience for building "Local First" web applications where Python handles the backend logic and TypeScript/React handles the UI. Inspired by PyTauri's command system, but designed for standard web frameworks.
+Zynk creates a seamless developer experience for building "Local First" web applications where Python handles the backend logic and TypeScript/React handles the UI. Inspired by PyTauri's command system, but designed for standard web frameworks.
 
 ## 📦 Installation
 
 ```bash
-pip install zync
+pip install zynk
 ```
 
 Or with development dependencies:
 
 ```bash
-pip install zync[dev]
+pip install zynk[dev]
 ```
 
 ## 🚀 Quick Start
@@ -23,7 +23,7 @@ pip install zync[dev]
 ```python
 # users.py
 from pydantic import BaseModel
-from zync import command
+from zynk import command
 
 class User(BaseModel):
     id: int
@@ -48,7 +48,7 @@ async def list_users() -> list[User]:
 
 ```python
 # main.py
-from zync import Bridge
+from zynk import Bridge
 
 # Import modules to register their commands (side-effect imports)
 import users
@@ -87,10 +87,10 @@ users.forEach(u => console.log(u.email));
 
 #### `@command` Decorator
 
-Register a function as a Zync command:
+Register a function as a Zynk command:
 
 ```python
-from zync import command
+from zynk import command
 
 @command
 async def my_command(arg1: str, arg2: int = 10) -> dict:
@@ -108,7 +108,7 @@ async def internal_function() -> str:
 Main server class:
 
 ```python
-from zync import Bridge
+from zynk import Bridge
 
 app = Bridge(
     generate_ts="../frontend/src/api.ts",  # Where to generate TypeScript
@@ -127,7 +127,7 @@ app.run(dev=True)  # dev=True enables hot-reload
 Send real-time updates to the frontend:
 
 ```python
-from zync import command, Channel
+from zynk import command, Channel
 
 @command
 async def stream_updates(channel: Channel[dict]) -> None:
@@ -201,8 +201,8 @@ channel.close();
 
 ```bash
 # Clone the repository
-git clone https://github.com/zync/zync
-cd zync
+git clone https://github.com/zynk/zynk
+cd zynk
 
 # Install Python dependencies
 pip install -e .

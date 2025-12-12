@@ -1,12 +1,12 @@
 """
-Tests for the Zync registry module.
+Tests for the Zynk registry module.
 """
 
 
 import pytest
 from pydantic import BaseModel
 
-from zync.registry import CommandRegistry, command, get_registry
+from zynk.registry import CommandRegistry, command, get_registry
 
 
 class TestUser(BaseModel):
@@ -166,7 +166,7 @@ def test_command_docstring():
 
 def test_channel_command():
     """Test command with channel parameter."""
-    from zync.channel import Channel
+    from zynk.channel import Channel
 
     @command
     async def stream_data(query: str, channel: Channel[dict]) -> None:

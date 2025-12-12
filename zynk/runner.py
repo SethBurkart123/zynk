@@ -21,16 +21,16 @@ def run(
     host: str = "127.0.0.1",
     port: int = 8000,
     cors_origins: list[str] | None = None,
-    title: str = "Zync API",
+    title: str = "Zynk API",
     debug: bool = False,
     dev: bool = False,
     reload_dirs: list[str] | None = None,
     import_modules: list[str] | None = None,
 ) -> None:
     """
-    Run the Zync server.
+    Run the Zynk server.
 
-    This is the main entry point for starting a Zync application.
+    This is the main entry point for starting a Zynk application.
     It handles both production and development modes.
 
     Args:
@@ -45,7 +45,7 @@ def run(
         import_modules: List of module names containing commands to import.
 
     Example:
-        from zync import run
+        from zynk import run
 
         if __name__ == "__main__":
             run(
@@ -111,7 +111,7 @@ Commands:   {len(commands)}"""
         content += f"\nTypeScript: {generate_ts}"
 
     console = Console()
-    panel = Panel.fit(content, title=f"Zync - {title}", border_style="blue")
+    panel = Panel.fit(content, title=f"Zynk - {title}", border_style="blue")
     console.print(panel)
     console.print("")
 
@@ -126,7 +126,7 @@ Commands:   {len(commands)}"""
         watch_dirs = reload_dirs or ["."]
 
         uvicorn.run(
-            "zync.server:create_app",
+            "zynk.server:create_app",
             host=host,
             port=port,
             reload=True,

@@ -1,7 +1,7 @@
 """
 Kitchen Sink Example - Main Entry Point
 
-Demonstrates Zync setup with multiple command modules.
+Demonstrates Zynk setup with multiple command modules.
 """
 
 # Import modules to register their commands (side-effect imports)
@@ -9,7 +9,7 @@ import tasks
 import users
 import weather
 
-from zync import Bridge
+from zynk import Bridge
 
 # Create the bridge with TypeScript generation configured
 app = Bridge(

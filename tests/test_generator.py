@@ -1,5 +1,5 @@
 """
-Tests for the Zync TypeScript generator module.
+Tests for the Zynk TypeScript generator module.
 """
 
 import os
@@ -8,8 +8,8 @@ import tempfile
 import pytest
 from pydantic import BaseModel
 
-from zync.generator import TypeScriptGenerator, generate_typescript
-from zync.registry import CommandRegistry, command
+from zynk.generator import TypeScriptGenerator, generate_typescript
+from zynk.registry import CommandRegistry, command
 
 
 class SimpleModel(BaseModel):
@@ -228,7 +228,7 @@ def test_docstring_becomes_jsdoc(temp_dir):
 
 def test_channel_function_generation(temp_dir):
     """Test channel/streaming function generation."""
-    from zync.channel import Channel
+    from zynk.channel import Channel
 
     @command
     async def stream_data(query: str, channel: Channel[SimpleModel]) -> None:

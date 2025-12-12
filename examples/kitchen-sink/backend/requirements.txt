@@ -1,5 +1,5 @@
-# Zync Kitchen Sink Backend Dependencies
-zync>=0.1.0
+# Zynk Kitchen Sink Backend Dependencies
+zynk>=0.1.0
 
 # Or install from local source:
 # pip install -e ../../

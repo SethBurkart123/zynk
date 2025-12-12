@@ -1,1 +1,1 @@
-"""Zync test suite."""
+"""Zynk test suite."""

@@ -3,14 +3,14 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "zync"
+name = "zynk"
 version = "0.1.0"
 description = "Bridge Python backends to TypeScript frontends with automatic type-safe client generation"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
-    {name = "Zync Team"}
+    {name = "Zynk Team"}
 ]
 keywords = [
     "typescript",
@@ -55,16 +55,16 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/zync/zync"
-Documentation = "https://github.com/zync/zync#readme"
-Repository = "https://github.com/zync/zync"
+Homepage = "https://github.com/zynk/zynk"
+Documentation = "https://github.com/zynk/zynk#readme"
+Repository = "https://github.com/zynk/zynk"
 
 [project.scripts]
-zync = "zync.cli:main"
+zynk = "zynk.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["zync*"]
+include = ["zynk*"]
 
 [tool.black]
 line-length = 88

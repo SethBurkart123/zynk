@@ -1,7 +1,7 @@
 """
 Error Handling Module
 
-Defines exception types and error response formatting for Zync.
+Defines exception types and error response formatting for Zynk.
 Ensures consistent error propagation from Python to TypeScript.
 """
 
@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 class BridgeError(Exception):
     """
-    Base exception for Zync errors.
+    Base exception for Zynk errors.
 
     Attributes:
         code: A machine-readable error code (e.g., "VALIDATION_ERROR").

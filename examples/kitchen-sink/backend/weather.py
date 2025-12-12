@@ -9,7 +9,7 @@ import random
 
 from pydantic import BaseModel
 
-from zync import Channel, command
+from zynk import Channel, command
 
 
 class WeatherData(BaseModel):
@@ -122,7 +122,7 @@ async def stream_weather(city: str, interval_seconds: float, channel: Channel[We
     """
     Stream live weather updates for a city.
 
-    This demonstrates Zync's streaming/channel support.
+    This demonstrates Zynk's streaming/channel support.
     Updates are sent at the specified interval until the channel is closed.
 
     Args:
