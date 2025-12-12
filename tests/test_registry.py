@@ -11,12 +11,14 @@ from zync.registry import CommandRegistry, command, get_registry
 
 class TestUser(BaseModel):
     """Test user model."""
+    __test__ = False
     id: int
     name: str
 
 
 class TestPost(BaseModel):
     """Test post model with nested user."""
+    __test__ = False
     id: int
     title: str
     author: TestUser
