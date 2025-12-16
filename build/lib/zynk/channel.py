@@ -14,7 +14,6 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Generic, TypeVar
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +92,8 @@ class Channel(Generic[T]):
         if not self.is_open:
             raise RuntimeError(f"Cannot send on closed channel {self.id}")
 
+        # Serialize Pydantic models
+        from pydantic import BaseModel
         if isinstance(data, BaseModel):
             serialized = data.model_dump()
         else:
@@ -105,28 +106,6 @@ class Channel(Generic[T]):
         )
         await self._queue.put(message)
         logger.debug(f"Channel {self.id}: sent message")
-
-    def send_model(self, model: Any) -> None:
-        """
-        Send a Pydantic model as a typed SSE event (sync version).
-        
-        Uses the model's `event` field as the SSE event type.
-        The rest of the model data becomes the SSE data payload.
-        """
-        from pydantic import BaseModel
-        if not isinstance(model, BaseModel):
-            raise TypeError("send_model requires a Pydantic BaseModel")
-
-        event_name = getattr(model, "event", "message")
-        data = model.model_dump(exclude={"event"})
-        
-        message = ChannelMessage(
-            event=event_name,
-            data=data,
-            channel_id=self.id,
-        )
-        self._queue.put_nowait(message)
-        logger.debug(f"Channel {self.id}: sent {event_name} event")
 
     async def send_error(self, error: str) -> None:
         """

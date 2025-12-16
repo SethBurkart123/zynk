@@ -12,7 +12,7 @@ import logging
 import types
 from typing import Any, Union, get_args, get_origin
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -21,7 +21,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
 
-from .channel import Channel
+from .channel import Channel, channel_manager
 from .errors import (
     BridgeError,
     CommandExecutionError,
@@ -38,32 +38,32 @@ logger = logging.getLogger(__name__)
 def instantiate_model(data: Any, type_hint: Any) -> Any:
     """
     Recursively instantiate Pydantic models from dicts.
-
+    
     Args:
         data: The data to convert (dict, list, or primitive).
         type_hint: The expected type hint.
-
+        
     Returns:
         Instantiated Pydantic model or original data.
     """
     if data is None:
         return None
-
+    
     # Get the origin and args for generic types
     origin = get_origin(type_hint) if type_hint else None
     args = get_args(type_hint) if type_hint else ()
-
+    
     # Handle Union types (Optional, T | None, etc.)
     if origin is Union or (hasattr(types, 'UnionType') and origin is types.UnionType):
         non_none_args = [a for a in args if a is not type(None)]
         if non_none_args:
             return instantiate_model(data, non_none_args[0])
-
+    
     # Handle lists
     if isinstance(data, list) and origin is list and args:
         item_type = args[0]
         return [instantiate_model(item, item_type) for item in data]
-
+    
     # Handle dicts that should become Pydantic models
     if isinstance(data, dict):
         if type_hint and isinstance(type_hint, type) and issubclass(type_hint, BaseModel):
@@ -77,7 +77,7 @@ def instantiate_model(data: Any, type_hint: Any) -> Any:
                 else:
                     converted[key] = value
             return type_hint(**converted)
-
+    
     return data
 
 
@@ -224,8 +224,8 @@ class Bridge:
             return {"result": result}
 
         @self.app.post("/channel/{command_name}")
-        async def channel_command(command_name: str, request: Request):
-            """Execute a streaming channel command, returning SSE directly."""
+        async def init_channel(command_name: str, request: Request):
+            """Initialize a channel for streaming."""
             registry = get_registry()
             cmd = registry.get_command(command_name)
 
@@ -242,14 +242,33 @@ class Bridge:
             except Exception as e:
                 raise ValidationError(f"Invalid JSON body: {e}")
 
-            channel = Channel()
-            asyncio.create_task(self._execute_channel_command(cmd, body, channel))
+            channel = await channel_manager.create()
+
+            asyncio.create_task(
+                self._execute_channel_command(cmd, body, channel)
+            )
+
+            return {"channelId": channel.id}
+
+        @self.app.get("/channel/stream/{channel_id}")
+        async def stream_channel(channel_id: str):
+            """Stream channel messages via SSE."""
+            channel = await channel_manager.get(channel_id)
+
+            if not channel:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Channel '{channel_id}' not found"
+                )
 
             async def event_generator():
-                async for message in channel:
-                    yield message.to_sse()
-                    if message.event in ("close", "error"):
-                        break
+                try:
+                    async for message in channel:
+                        yield message.to_sse()
+                        if message.event in ("close", "error"):
+                            break
+                finally:
+                    await channel_manager.remove(channel_id)
 
             return StreamingResponse(
                 event_generator(),
@@ -417,7 +436,6 @@ Commands:   {len(commands)}"""
                 channel_marker = " [channel]" if cmd.has_channel else ""
                 logger.debug(f"  - {cmd.name}{channel_marker} ({cmd.module})")
 
-        if dev:
             command_modules = set()
             for cmd in commands.values():
                 module_name = cmd.module
@@ -442,14 +460,14 @@ Commands:   {len(commands)}"""
                 reload=True,
                 reload_dirs=["."],
                 factory=True,
-                log_level="debug" if self.debug else "info",
+                log_level="info" if not self.debug else "debug",
             )
         else:
             uvicorn.run(
                 self.app,
                 host=self.host,
                 port=self.port,
-                log_level="debug" if self.debug else "info",
+                log_level="info" if not self.debug else "debug",
             )
 
 

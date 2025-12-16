@@ -25,7 +25,6 @@ def run(
     debug: bool = False,
     dev: bool = False,
     reload_dirs: list[str] | None = None,
-    reload_excludes: list[str] | None = None,
     import_modules: list[str] | None = None,
 ) -> None:
     """
@@ -43,8 +42,6 @@ def run(
         debug: Enable debug logging.
         dev: Enable development mode with hot-reloading.
         reload_dirs: Directories to watch for changes (dev mode only).
-        reload_excludes: Glob patterns to exclude from file watching (dev mode only).
-                        Defaults to [".git", "__pycache__", "node_modules", ".venv"].
         import_modules: List of module names containing commands to import.
 
     Example:
@@ -127,14 +124,6 @@ Commands:   {len(commands)}"""
         logger.info("Starting in development mode with hot-reload...")
 
         watch_dirs = reload_dirs or ["."]
-        
-        # Default exclusions to prevent watching common non-source directories
-        exclude_patterns = reload_excludes if reload_excludes is not None else [
-            ".git",
-            "__pycache__",
-            "node_modules",
-            ".venv",
-        ]
 
         uvicorn.run(
             "zynk.server:create_app",
@@ -142,7 +131,6 @@ Commands:   {len(commands)}"""
             port=port,
             reload=True,
             reload_dirs=watch_dirs,
-            reload_excludes=exclude_patterns,
             factory=True,
             log_level="debug" if debug else "info",
         )
