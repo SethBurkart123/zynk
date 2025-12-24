@@ -50,12 +50,6 @@ def python_name_to_pascal_case(name: str) -> str:
     return "".join(x.title() for x in name.split("_"))
 
 
-def needs_snake_case_conversion(field_name: str) -> bool:
-    """Check if a field name needs snake_case to camelCase conversion."""
-    camel = python_name_to_camel_case(field_name)
-    return camel != field_name
-
-
 class TypeScriptGenerator:
     """
     Generates TypeScript client code from Zynk command registry.
@@ -217,7 +211,6 @@ class TypeScriptGenerator:
         Returns:
             TypeScript expression for the mapped object
         """
-        # First pass: check if ANY field needs special handling
         needs_object_literal = False
         field_mappings = []
         
@@ -225,7 +218,6 @@ class TypeScriptGenerator:
             ts_name = python_name_to_camel_case(field_name)
             annotation = field_info.annotation
             
-            # Unwrap Optional/Union types
             origin = get_origin(annotation)
             args = get_args(annotation)
             actual_type = annotation
@@ -240,15 +232,12 @@ class TypeScriptGenerator:
             actual_origin = get_origin(actual_type)
             actual_args = get_args(actual_type)
             
-            # Check if field name needs conversion
             name_needs_conversion = ts_name != field_name
             
-            # Check if it's a nested Pydantic model
             if isinstance(actual_type, type) and issubclass(actual_type, BaseModel):
                 nested_mapping = self._generate_inline_field_mapping(
                     actual_type, f"{obj_ref}.{ts_name}", models_to_generate
                 )
-                # Only need special handling if nested mapping isn't just the ref
                 if nested_mapping != f"{obj_ref}.{ts_name}" or name_needs_conversion:
                     needs_object_literal = True
                     if is_optional:
@@ -260,14 +249,12 @@ class TypeScriptGenerator:
                 else:
                     field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
             
-            # Check if it's a list of Pydantic models
             elif actual_origin is list and actual_args:
                 item_type = actual_args[0]
                 if isinstance(item_type, type) and issubclass(item_type, BaseModel):
                     item_mapping = self._generate_inline_field_mapping(
                         item_type, "item", models_to_generate
                     )
-                    # Only need special handling if items need conversion
                     if item_mapping != "item" or name_needs_conversion:
                         needs_object_literal = True
                         if is_optional:
@@ -287,14 +274,12 @@ class TypeScriptGenerator:
                 else:
                     field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
             
-            # Simple field
             elif name_needs_conversion:
                 needs_object_literal = True
                 field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
             else:
                 field_mappings.append(f"{field_name}: {obj_ref}.{ts_name}")
         
-        # If no special handling needed, just return the object reference
         if not needs_object_literal:
             return obj_ref
         
@@ -385,10 +370,8 @@ class TypeScriptGenerator:
                 lines.append(f" * {line.strip()}")
             lines.append(" */")
 
-        # Helper to generate parameter mapping expression
         def get_param_mapping(camel: str, snake: str, is_optional: bool, param_type: Any) -> str:
             """Generate the mapping expression for a single parameter."""
-            # Unwrap Optional types
             actual_type = param_type
             origin = get_origin(param_type)
             args = get_args(param_type)
@@ -398,7 +381,6 @@ class TypeScriptGenerator:
                 if non_none_args:
                     actual_type = non_none_args[0]
             
-            # If it's a Pydantic model, generate inline mapping
             if isinstance(actual_type, type) and issubclass(actual_type, BaseModel):
                 inline_mapping = self._generate_inline_field_mapping(
                     actual_type, f"args.{camel}", models_to_generate
@@ -407,12 +389,8 @@ class TypeScriptGenerator:
                     return f"{snake}: args.{camel} != null ? {inline_mapping} : undefined"
                 return f"{snake}: {inline_mapping}"
             
-            # Simple field - check if names match
-            if camel == snake:
-                return f"{snake}: args.{camel}"
             return f"{snake}: args.{camel}"
 
-        # Build the mappings
         if cmd.params:
             mappings = []
             has_model_params = False
@@ -422,7 +400,6 @@ class TypeScriptGenerator:
                 mapping = get_param_mapping(ts_param_name, param_name, is_optional, param_type)
                 mappings.append(mapping)
                 
-                # Check if this param is a Pydantic model (needs internal field mapping)
                 actual_type = param_type
                 origin = get_origin(param_type)
                 args = get_args(param_type)
@@ -433,8 +410,6 @@ class TypeScriptGenerator:
                 if isinstance(actual_type, type) and issubclass(actual_type, BaseModel):
                     has_model_params = True
             
-            # Check if we can just pass through args:
-            # Only when all names match AND no Pydantic models (which need internal field conversion)
             all_names_match = all(
                 ts_name == py_name 
                 for ts_name, py_name, _, _ in param_mapping
