@@ -57,6 +57,31 @@ For WebSocket bidirectional communication:
             await ws.send("chat_message", data)
 
         await ws.listen()
+
+For file uploads with progress tracking:
+
+    from zynk import upload, UploadFile
+    from pydantic import BaseModel
+
+    class UploadResult(BaseModel):
+        filename: str
+        size: int
+        url: str
+
+    @upload(max_size="10MB", allowed_types=["image/*", "application/pdf"])
+    async def upload_file(file: UploadFile) -> UploadResult:
+        content = await file.read()
+        # ... save file ...
+        return UploadResult(filename=file.filename, size=file.size, url="...")
+
+    # For multiple files:
+    @upload
+    async def upload_files(files: list[UploadFile]) -> list[UploadResult]:
+        results = []
+        for file in files:
+            content = await file.read()
+            results.append(UploadResult(...))
+        return results
 """
 
 __version__ = "0.1.3"
@@ -72,12 +97,15 @@ from .errors import (
     CommandNotFoundError,
     InternalError,
     MessageHandlerNotFoundError,
+    UploadHandlerNotFoundError,
+    UploadValidationError,
     ValidationError,
     WebSocketError,
 )
 from .generator import generate_typescript
 from .registry import CommandInfo, CommandRegistry, command, get_registry, message
 from .runner import run
+from .upload import UploadFile, UploadInfo, upload
 from .websocket import WebSocket, MessageHandlerInfo
 
 __all__ = [
@@ -87,6 +115,7 @@ __all__ = [
     "Bridge",
     "command",
     "message",
+    "upload",
     "run",
     # Streaming
     "Channel",
@@ -95,6 +124,9 @@ __all__ = [
     # WebSocket
     "WebSocket",
     "MessageHandlerInfo",
+    # Upload
+    "UploadFile",
+    "UploadInfo",
     # Registry
     "get_registry",
     "CommandRegistry",
@@ -110,4 +142,6 @@ __all__ = [
     "InternalError",
     "WebSocketError",
     "MessageHandlerNotFoundError",
+    "UploadHandlerNotFoundError",
+    "UploadValidationError",
 ]

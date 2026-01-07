@@ -19,6 +19,10 @@ from pydantic import BaseModel
 
 from .websocket import MessageHandlerInfo, WebSocket, _extract_event_types
 
+# Forward declaration for type hints - actual import at runtime to avoid circular imports
+if False:  # TYPE_CHECKING equivalent without import
+    from .upload import UploadInfo
+
 
 class CommandInfo:
     """Stores metadata about a registered command."""
@@ -65,6 +69,7 @@ class CommandRegistry:
             cls._instance._commands: dict[str, CommandInfo] = {}
             cls._instance._models: dict[str, type[BaseModel]] = {}
             cls._instance._message_handlers: dict[str, MessageHandlerInfo] = {}
+            cls._instance._uploads: dict[str, "UploadInfo"] = {}
             cls._instance._initialized = True
         return cls._instance
 
@@ -82,6 +87,7 @@ class CommandRegistry:
             cls._instance._commands.clear()
             cls._instance._models.clear()
             cls._instance._message_handlers.clear()
+            cls._instance._uploads.clear()
 
     def register(self, cmd: CommandInfo) -> None:
         """
@@ -140,6 +146,30 @@ class CommandRegistry:
         """Get all registered message handlers."""
         return self._message_handlers.copy()
 
+    def register_upload(self, upload_info: "UploadInfo") -> None:
+        """
+        Register an upload handler.
+
+        Raises:
+            ValueError: If an upload handler with the same name already exists.
+        """
+        if upload_info.name in self._uploads:
+            existing = self._uploads[upload_info.name]
+            raise ValueError(
+                f"Upload handler name conflict: '{upload_info.name}' is defined in both "
+                f"'{existing.module}' and '{upload_info.module}'. "
+                f"Handler names must be unique across all modules."
+            )
+        self._uploads[upload_info.name] = upload_info
+
+    def get_upload(self, name: str) -> "UploadInfo | None":
+        """Get an upload handler by name."""
+        return self._uploads.get(name)
+
+    def get_all_uploads(self) -> dict[str, "UploadInfo"]:
+        """Get all registered upload handlers."""
+        return self._uploads.copy()
+
     def collect_models_from_type(self, type_hint: Any) -> None:
         """
         Recursively collect Pydantic models from a type hint.
@@ -196,6 +226,7 @@ def command(func: Callable = None, *, name: str | None = None) -> Callable:
     Returns:
         The decorated function.
     """
+
     def decorator(fn: Callable) -> Callable:
         cmd_name = name or fn.__name__
 
@@ -302,6 +333,7 @@ def message(func: Callable = None, *, name: str | None = None) -> Callable:
     Returns:
         The decorated function.
     """
+
     def decorator(fn: Callable) -> Callable:
         handler_name = name or fn.__name__
 

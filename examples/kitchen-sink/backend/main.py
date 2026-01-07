@@ -7,6 +7,7 @@ Demonstrates Zynk setup with multiple command modules.
 # Import modules to register their commands and handlers (side-effect imports)
 import chat
 import tasks
+import uploads
 import users
 import weather
 

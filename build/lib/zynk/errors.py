@@ -109,10 +109,34 @@ class MessageHandlerNotFoundError(BridgeError):
         )
 
 
+class UploadHandlerNotFoundError(BridgeError):
+    """Raised when a requested upload handler doesn't exist."""
+
+    def __init__(self, handler_name: str):
+        super().__init__(
+            "UPLOAD_HANDLER_NOT_FOUND",
+            f"Upload handler '{handler_name}' not found",
+            {"handler": handler_name},
+        )
+
+
+class UploadValidationError(BridgeError):
+    """Raised when upload file validation fails."""
+
+    def __init__(self, message: str, filename: str | None = None):
+        super().__init__(
+            "UPLOAD_VALIDATION_ERROR",
+            message,
+            {"filename": filename} if filename else None,
+        )
+
+
 # Response models for API
+
 
 class ErrorResponse(BaseModel):
     """Standard error response format."""
+
     code: str
     message: str
     details: Any | None = None
@@ -120,11 +144,13 @@ class ErrorResponse(BaseModel):
 
 class SuccessResponse(BaseModel):
     """Standard success response format."""
+
     result: Any
 
 
 class ChannelInitResponse(BaseModel):
     """Response for channel initialization."""
+
     channel_id: str
 
     model_config = {"populate_by_name": True}

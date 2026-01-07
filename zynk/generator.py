@@ -23,6 +23,7 @@ from typing import (
 from pydantic import BaseModel
 
 from .registry import CommandInfo, get_registry
+from .upload import UploadInfo
 from .websocket import MessageHandlerInfo
 
 logger = logging.getLogger(__name__)
@@ -494,7 +495,9 @@ class TypeScriptGenerator:
                     actual_type, f"args.{camel}", models_to_generate
                 )
                 if is_optional:
-                    return f"{snake}: args.{camel} != null ? {inline_mapping} : undefined"
+                    return (
+                        f"{snake}: args.{camel} != null ? {inline_mapping} : undefined"
+                    )
                 return f"{snake}: {inline_mapping}"
 
             return f"{snake}: args.{camel}"
@@ -559,7 +562,9 @@ class TypeScriptGenerator:
                 needs_response_mapping = True
                 is_list_return = True
                 return_model = item_type
-        elif isinstance(actual_return_type, type) and issubclass(actual_return_type, BaseModel):
+        elif isinstance(actual_return_type, type) and issubclass(
+            actual_return_type, BaseModel
+        ):
             needs_response_mapping = True
             return_model = actual_return_type
 
@@ -592,9 +597,13 @@ class TypeScriptGenerator:
                     return_model, "_r", models_to_generate
                 )
                 if response_mapping != "_r":
-                    lines.append(f'    const _r = await request("{cmd.name}", {args_obj});')
+                    lines.append(
+                        f'    const _r = await request("{cmd.name}", {args_obj});'
+                    )
                     if is_list_return:
-                        lines.append(f"    return _r.map((_r: unknown) => ({response_mapping}));")
+                        lines.append(
+                            f"    return _r.map((_r: unknown) => ({response_mapping}));"
+                        )
                     else:
                         lines.append(f"    return {response_mapping};")
                 else:
@@ -602,6 +611,103 @@ class TypeScriptGenerator:
             else:
                 lines.append(f'    return request("{cmd.name}", {args_obj});')
             lines.append("}")
+
+        return "\n".join(lines)
+
+    def _generate_upload_function(
+        self,
+        upload: UploadInfo,
+        models_to_generate: set[str],
+    ) -> str:
+        """
+        Generate TypeScript function for an upload handler.
+
+        Args:
+            upload: The upload handler info.
+            models_to_generate: Set to collect model names.
+
+        Returns:
+            TypeScript function definition string.
+        """
+        lines = []
+
+        # Function name (convert to camelCase)
+        fn_name = python_name_to_camel_case(upload.name)
+
+        # Build parameter types
+        param_fields = []
+        required_fields = []
+        optional_fields = []
+        param_mapping = []  # (ts_name, py_name, is_optional)
+
+        # Add file parameter - always required
+        if upload.is_multi_file:
+            required_fields.append("files: File[]")
+        else:
+            required_fields.append("file: File")
+
+        # Add other parameters
+        for param_name, param_type in upload.params.items():
+            ts_param_name = python_name_to_camel_case(param_name)
+            ts_type = self._type_to_ts(param_type, models_to_generate)
+            is_optional = param_name in upload.optional_params
+
+            if is_optional:
+                clean_type = ts_type.removesuffix(" | undefined")
+                optional_fields.append(f"{ts_param_name}?: {clean_type}")
+            else:
+                required_fields.append(f"{ts_param_name}: {ts_type}")
+            param_mapping.append((ts_param_name, param_name, is_optional))
+
+        param_fields = required_fields + optional_fields
+        params_type = "{ " + "; ".join(param_fields) + " }"
+
+        # Get return type
+        return_type = self._type_to_ts(upload.return_type, models_to_generate)
+        if return_type == "void" or return_type == "undefined":
+            return_type = "void"
+
+        # Generate JSDoc
+        if upload.docstring:
+            lines.append("/**")
+            for line in upload.docstring.strip().split("\n"):
+                lines.append(f" * {line.strip()}")
+            lines.append(" */")
+
+        # Generate function signature
+        lines.append(
+            f"export function {fn_name}(args: {params_type}): UploadHandle<{return_type}> {{"
+        )
+
+        # Build args mapping for non-file params
+        if param_mapping:
+            mappings = []
+            for ts_name, py_name, _ in param_mapping:
+                if ts_name != py_name:
+                    mappings.append(f"{py_name}: args.{ts_name}")
+                else:
+                    mappings.append(f"{py_name}: args.{py_name}")
+
+            # Construct the files array - wrap single file in array for createUpload
+            if upload.is_multi_file:
+                files_expr = "args.files"
+            else:
+                files_expr = "[args.file]"
+
+            args_obj = "{ " + ", ".join(mappings) + " }"
+            lines.append(
+                f'    return createUpload("{upload.name}", {files_expr}, {args_obj});'
+            )
+        else:
+            if upload.is_multi_file:
+                files_expr = "args.files"
+            else:
+                files_expr = "[args.file]"
+            lines.append(
+                f'    return createUpload("{upload.name}", {files_expr}, {{}});'
+            )
+
+        lines.append("}")
 
         return "\n".join(lines)
 
@@ -796,7 +902,9 @@ class TypeScriptGenerator:
                     event_type, "_d", models_to_generate
                 )
                 if response_mapping != "_d":
-                    lines.append(f'        return this.on("{event_name}", (_d) => callback({response_mapping}));')
+                    lines.append(
+                        f'        return this.on("{event_name}", (_d) => callback({response_mapping}));'
+                    )
                 else:
                     lines.append(f'        return this.on("{event_name}", callback);')
             else:
@@ -814,7 +922,9 @@ class TypeScriptGenerator:
                     event_type, "data", models_to_generate
                 )
                 if input_mapping != "data":
-                    lines.append(f'        this.send("{event_name}", {input_mapping} as {ts_type});')
+                    lines.append(
+                        f'        this.send("{event_name}", {input_mapping} as {ts_type});'
+                    )
                 else:
                     lines.append(f'        this.send("{event_name}", data);')
             else:
@@ -1003,6 +1113,89 @@ export function createChannel<T>(command: string, args: unknown): BridgeChannel<
         },
     };
 }
+
+export interface UploadProgressEvent {
+    loaded: number;
+    total: number;
+    percentage: number;
+}
+
+export interface UploadHandle<T> {
+    promise: Promise<T>;
+    abort(): void;
+    onProgress(callback: (event: UploadProgressEvent) => void): UploadHandle<T>;
+}
+
+export function createUpload<T>(
+    handler: string,
+    files: File[],
+    args: Record<string, unknown>
+): UploadHandle<T> {
+    const xhr = new XMLHttpRequest();
+    let progressCallback: ((e: UploadProgressEvent) => void) | null = null;
+
+    const promise = new Promise<T>((resolve, reject) => {
+        const formData = new FormData();
+
+        // Add files
+        for (const file of files) {
+            formData.append("files", file);
+        }
+
+        // Add other args as JSON
+        formData.append("_args", JSON.stringify(args));
+
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable && progressCallback) {
+                progressCallback({
+                    loaded: e.loaded,
+                    total: e.total,
+                    percentage: Math.round((e.loaded / e.total) * 100),
+                });
+            }
+        };
+
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    resolve(data.result as T);
+                } catch {
+                    reject(new Error("Failed to parse response"));
+                }
+            } else {
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    reject(new BridgeRequestError({
+                        code: data.code || "UPLOAD_ERROR",
+                        message: data.message || "Upload failed",
+                        details: data.details,
+                    }));
+                } catch {
+                    reject(new Error(`Upload failed with status ${xhr.status}`));
+                }
+            }
+        };
+
+        xhr.onerror = () => reject(new Error("Upload failed"));
+        xhr.onabort = () => reject(new Error("Upload aborted"));
+
+        const baseUrl = getBaseUrl();
+        xhr.open("POST", `${baseUrl}/upload/${handler}`);
+        xhr.send(formData);
+    });
+
+    const handle: UploadHandle<T> = {
+        promise,
+        abort: () => xhr.abort(),
+        onProgress: (cb) => {
+            progressCallback = cb;
+            return handle;
+        },
+    };
+
+    return handle;
+}
 """
 
     def generate(self, output_path: str) -> None:
@@ -1016,10 +1209,11 @@ export function createChannel<T>(command: string, args: unknown): BridgeChannel<
         commands = registry.get_all_commands()
         models = registry.get_all_models()
         message_handlers = registry.get_all_message_handlers()
+        uploads = registry.get_all_uploads()
 
-        if not commands and not message_handlers:
+        if not commands and not message_handlers and not uploads:
             logger.warning(
-                "No commands or message handlers registered. Generating empty client."
+                "No commands, uploads, or message handlers registered. Generating empty client."
             )
 
         output_path = Path(output_path)
@@ -1035,14 +1229,32 @@ export function createChannel<T>(command: string, args: unknown): BridgeChannel<
         models_to_generate: set[str] = set()
         sections: list[str] = []
 
+        # Build imports based on what's needed
+        imports = ["initBridge", "BridgeRequestError"]
+        type_imports = ["BridgeError"]
+
+        if commands:
+            imports.append("request")
+            # Check if any commands have channels
+            if any(cmd.has_channel for cmd in commands.values()):
+                imports.append("createChannel")
+                type_imports.append("BridgeChannel")
+
+        if uploads:
+            imports.append("createUpload")
+            type_imports.extend(["UploadHandle", "UploadProgressEvent"])
+
+        if message_handlers:
+            imports.append("getBaseUrl")
+
         sections.append(f"""/* Auto-generated by Zynk - DO NOT EDIT */
 /* Generated: {datetime.now().isoformat()} */
 
-import {{ initBridge, request, createChannel, getBaseUrl, BridgeRequestError }} from "./_internal";
-import type {{ BridgeChannel, BridgeError }} from "./_internal";
+import {{ {", ".join(imports)} }} from "./_internal";
+import type {{ {", ".join(type_imports)} }} from "./_internal";
 
 export {{ initBridge, BridgeRequestError }};
-export type {{ BridgeChannel, BridgeError }};
+export type {{ {", ".join(type_imports)} }};
 """)
 
         command_functions: list[str] = []
@@ -1076,6 +1288,28 @@ export type {{ BridgeChannel, BridgeError }};
             sections.append("\n// ============ Commands ============\n")
             sections.append("\n\n".join(command_functions))
 
+        # Generate upload functions
+        upload_functions: list[str] = []
+        for upload in sorted(uploads.values(), key=lambda u: u.name):
+            fn_code = self._generate_upload_function(upload, models_to_generate)
+            upload_functions.append(fn_code)
+
+        if upload_functions:
+            sections.append("\n// ============ Uploads ============\n")
+            sections.append("\n\n".join(upload_functions))
+
+        # Re-generate models in case upload handlers added new ones
+        while models_to_generate - generated_models:
+            current_batch = models_to_generate - generated_models
+            for model_name in sorted(current_batch):
+                model = models.get(model_name)
+                if model:
+                    interface_code = self._generate_model_interface(
+                        model, models_to_generate
+                    )
+                    model_interfaces.append(interface_code)
+                generated_models.add(model_name)
+
         # Generate WebSocket classes for message handlers
         websocket_classes: list[str] = []
         for handler in sorted(message_handlers.values(), key=lambda h: h.name):
@@ -1104,7 +1338,7 @@ export type {{ BridgeChannel, BridgeError }};
 
         logger.debug(
             f"Generated TypeScript client: {output_path} "
-            f"({len(commands)} commands, {len(message_handlers)} websockets, {len(generated_models)} interfaces)"
+            f"({len(commands)} commands, {len(uploads)} uploads, {len(message_handlers)} websockets, {len(generated_models)} interfaces)"
         )
 
 

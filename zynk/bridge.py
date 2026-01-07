@@ -8,11 +8,12 @@ Handles FastAPI setup, routing, hot-reloading, and TypeScript generation.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import types
 from typing import Any, Union, get_args, get_origin
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Request, UploadFile as FastAPIUploadFile
 from fastapi import WebSocket as FastAPIWebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -29,11 +30,14 @@ from .errors import (
     CommandNotFoundError,
     InternalError,
     MessageHandlerNotFoundError,
+    UploadHandlerNotFoundError,
+    UploadValidationError,
     ValidationError,
     WebSocketError,
 )
 from .generator import generate_typescript
 from .registry import CommandInfo, get_registry
+from .upload import UploadFile, UploadInfo
 from .websocket import WebSocket, MessageHandlerInfo
 
 logger = logging.getLogger(__name__)
@@ -300,13 +304,113 @@ class Bridge:
                 logger.exception(f"WebSocket handler '{handler_name}' failed")
                 await ws.close(code=1011, reason=str(e))
 
+        @self.app.post("/upload/{handler_name}")
+        async def upload_endpoint(
+            handler_name: str,
+            request: Request,
+            files: list[FastAPIUploadFile] = File(default=[]),
+        ):
+            """
+            Handle file uploads with XMLHttpRequest progress support.
+
+            Files are sent as multipart/form-data with additional args in _args field.
+            """
+            registry = get_registry()
+            upload_handler = registry.get_upload(handler_name)
+
+            if not upload_handler:
+                raise UploadHandlerNotFoundError(handler_name)
+
+            # Parse additional args from _args form field
+            form = await request.form()
+            try:
+                args = json.loads(form.get("_args", "{}"))
+            except Exception as e:
+                raise ValidationError(f"Invalid _args JSON: {e}")
+
+            # Convert FastAPI UploadFiles to our UploadFile wrapper
+            upload_files: list[UploadFile] = []
+            for f in files:
+                # Read content to get size
+                content = await f.read()
+                await f.seek(0)  # Reset for later reading
+
+                wrapped = UploadFile(f, size=len(content))
+
+                # Validate file
+                try:
+                    upload_handler.validate_file(wrapped)
+                except ValueError as e:
+                    raise UploadValidationError(str(e), f.filename)
+
+                upload_files.append(wrapped)
+
+            # Execute the upload handler
+            result = await self._execute_upload(upload_handler, upload_files, args)
+
+            return {"result": result}
+
+    async def _execute_upload(
+        self,
+        handler: UploadInfo,
+        files: list[UploadFile],
+        args: dict[str, Any],
+    ) -> Any:
+        """
+        Execute an upload handler.
+
+        Args:
+            handler: The upload handler info.
+            files: List of uploaded files.
+            args: Additional arguments from _args.
+
+        Returns:
+            The handler result.
+        """
+        try:
+            kwargs = {}
+
+            # Add file(s) parameter
+            if handler.is_multi_file:
+                kwargs[handler.file_param] = files
+            else:
+                # Single file - take the first one
+                if not files:
+                    raise ValidationError("No file provided")
+                kwargs[handler.file_param] = files[0]
+
+            # Add other parameters
+            for param_name, param_type in handler.params.items():
+                if param_name in args:
+                    kwargs[param_name] = instantiate_model(args[param_name], param_type)
+
+            result = await handler.func(**kwargs)
+
+            if isinstance(result, BaseModel):
+                return result.model_dump()
+            elif isinstance(result, list):
+                return [
+                    item.model_dump() if isinstance(item, BaseModel) else item
+                    for item in result
+                ]
+
+            return result
+
+        except PydanticValidationError as e:
+            raise ValidationError(f"Validation failed: {e}")
+        except TypeError as e:
+            raise ValidationError(f"Invalid arguments: {e}")
+        except Exception as e:
+            logger.exception(f"Upload handler '{handler.name}' failed")
+            raise CommandExecutionError(str(e))
+
     def _setup_error_handlers(self) -> None:
         """Setup exception handlers."""
 
         @self.app.exception_handler(BridgeError)
         async def bridge_error_handler(request: Request, exc: BridgeError):
             status_code = 400
-            if isinstance(exc, CommandNotFoundError):
+            if isinstance(exc, (CommandNotFoundError, UploadHandlerNotFoundError)):
                 status_code = 404
             elif isinstance(exc, InternalError):
                 status_code = 500
@@ -438,12 +542,15 @@ class Bridge:
         registry = get_registry()
         commands = registry.get_all_commands()
         message_handlers = registry.get_all_message_handlers()
+        uploads = registry.get_all_uploads()
 
         mode = "Development" if dev else "Production"
 
         content = f"""Server:     http://{self.host}:{self.port}
 Mode:       {mode}
 Commands:   {len(commands)}"""
+        if uploads:
+            content += f"\nUploads:    {len(uploads)}"
         if message_handlers:
             content += f"\nWebSockets: {len(message_handlers)}"
         if self.generate_ts:
@@ -460,6 +567,13 @@ Commands:   {len(commands)}"""
             for cmd in commands.values():
                 channel_marker = " [channel]" if cmd.has_channel else ""
                 logger.debug(f"  - {cmd.name}{channel_marker} ({cmd.module})")
+            if uploads:
+                logger.debug("Registered upload handlers:")
+                for upload in uploads.values():
+                    multi_marker = " [multi]" if upload.is_multi_file else ""
+                    logger.debug(
+                        f"  - /upload/{upload.name}{multi_marker} ({upload.module})"
+                    )
             if message_handlers:
                 logger.debug("Registered message handlers:")
                 for handler in message_handlers.values():
@@ -469,6 +583,10 @@ Commands:   {len(commands)}"""
             command_modules = set()
             for cmd in commands.values():
                 module_name = cmd.module
+                if not module_name.startswith("zynk"):
+                    command_modules.add(module_name)
+            for upload in uploads.values():
+                module_name = upload.module
                 if not module_name.startswith("zynk"):
                     command_modules.add(module_name)
             for handler in message_handlers.values():
