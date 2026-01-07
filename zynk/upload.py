@@ -25,7 +25,6 @@ from typing import (
 )
 
 from fastapi import UploadFile as FastAPIUploadFile
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 

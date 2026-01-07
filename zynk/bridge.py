@@ -29,16 +29,14 @@ from .errors import (
     CommandExecutionError,
     CommandNotFoundError,
     InternalError,
-    MessageHandlerNotFoundError,
     UploadHandlerNotFoundError,
     UploadValidationError,
     ValidationError,
-    WebSocketError,
 )
 from .generator import generate_typescript
 from .registry import CommandInfo, get_registry
 from .upload import UploadFile, UploadInfo
-from .websocket import WebSocket, MessageHandlerInfo
+from .websocket import WebSocket
 
 logger = logging.getLogger(__name__)
 
