@@ -8,6 +8,7 @@ Handles FastAPI setup, routing, hot-reloading, and TypeScript generation.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import types
 from typing import Any, Union, get_args, get_origin
@@ -28,16 +29,14 @@ from .errors import (
     CommandExecutionError,
     CommandNotFoundError,
     InternalError,
-    MessageHandlerNotFoundError,
     UploadHandlerNotFoundError,
     UploadValidationError,
     ValidationError,
-    WebSocketError,
 )
 from .generator import generate_typescript
 from .registry import CommandInfo, get_registry
 from .upload import UploadFile, UploadInfo
-from .websocket import WebSocket, MessageHandlerInfo
+from .websocket import WebSocket
 
 logger = logging.getLogger(__name__)
 
@@ -322,12 +321,8 @@ class Bridge:
 
             # Parse additional args from _args form field
             form = await request.form()
-            args_json = form.get("_args", "{}")
             try:
-                import json
-
-                args_str = str(args_json) if args_json else "{}"
-                args = json.loads(args_str)
+                args = json.loads(form.get("_args", "{}"))
             except Exception as e:
                 raise ValidationError(f"Invalid _args JSON: {e}")
 

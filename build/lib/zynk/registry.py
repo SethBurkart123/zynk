@@ -13,14 +13,13 @@ import inspect
 import types
 from collections.abc import Callable
 from functools import wraps
-from typing import Any, Union, get_args, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, Union, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel
 
 from .websocket import MessageHandlerInfo, WebSocket, _extract_event_types
 
-# Forward declaration for type hints - actual import at runtime to avoid circular imports
-if False:  # TYPE_CHECKING equivalent without import
+if TYPE_CHECKING:
     from .upload import UploadInfo
 
 

@@ -133,10 +133,8 @@ class UploadValidationError(BridgeError):
 
 # Response models for API
 
-
 class ErrorResponse(BaseModel):
     """Standard error response format."""
-
     code: str
     message: str
     details: Any | None = None
@@ -144,7 +142,6 @@ class ErrorResponse(BaseModel):
 
 class SuccessResponse(BaseModel):
     """Standard success response format."""
-
     result: Any
 
 
