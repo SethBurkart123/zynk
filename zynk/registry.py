@@ -21,6 +21,7 @@ from .websocket import MessageHandlerInfo, WebSocket, _extract_event_types
 
 if TYPE_CHECKING:
     from .upload import UploadInfo
+    from .static import StaticInfo
 
 
 class CommandInfo:
@@ -69,6 +70,7 @@ class CommandRegistry:
             cls._instance._models: dict[str, type[BaseModel]] = {}
             cls._instance._message_handlers: dict[str, MessageHandlerInfo] = {}
             cls._instance._uploads: dict[str, "UploadInfo"] = {}
+            cls._instance._statics: dict[str, "StaticInfo"] = {}
             cls._instance._initialized = True
         return cls._instance
 
@@ -87,6 +89,7 @@ class CommandRegistry:
             cls._instance._models.clear()
             cls._instance._message_handlers.clear()
             cls._instance._uploads.clear()
+            cls._instance._statics.clear()
 
     def register(self, cmd: CommandInfo) -> None:
         """
@@ -168,6 +171,30 @@ class CommandRegistry:
     def get_all_uploads(self) -> dict[str, "UploadInfo"]:
         """Get all registered upload handlers."""
         return self._uploads.copy()
+
+    def register_static(self, static_info: "StaticInfo") -> None:
+        """
+        Register a static file handler.
+
+        Raises:
+            ValueError: If a static handler with the same name already exists.
+        """
+        if static_info.name in self._statics:
+            existing = self._statics[static_info.name]
+            raise ValueError(
+                f"Static handler name conflict: '{static_info.name}' is defined in both "
+                f"'{existing.module}' and '{static_info.module}'. "
+                f"Handler names must be unique across all modules."
+            )
+        self._statics[static_info.name] = static_info
+
+    def get_static(self, name: str) -> "StaticInfo | None":
+        """Get a static handler by name."""
+        return self._statics.get(name)
+
+    def get_all_statics(self) -> dict[str, "StaticInfo"]:
+        """Get all registered static handlers."""
+        return self._statics.copy()
 
     def collect_models_from_type(self, type_hint: Any) -> None:
         """

@@ -131,6 +131,17 @@ class UploadValidationError(BridgeError):
         )
 
 
+class StaticHandlerNotFoundError(BridgeError):
+    """Raised when a requested static file handler doesn't exist."""
+
+    def __init__(self, handler_name: str):
+        super().__init__(
+            "STATIC_HANDLER_NOT_FOUND",
+            f"Static handler '{handler_name}' not found",
+            {"handler": handler_name},
+        )
+
+
 # Response models for API
 
 class ErrorResponse(BaseModel):

@@ -82,6 +82,24 @@ For file uploads with progress tracking:
             content = await file.read()
             results.append(UploadResult(...))
         return results
+
+For static file serving:
+
+    from zynk import static, StaticFile
+
+    @static
+    async def user_avatar(user_id: str) -> StaticFile:
+        # Safe directory-based serving (prevents path traversal)
+        return StaticFile.from_directory(
+            base_dir=AVATARS_DIR,
+            filename=f"{user_id}.png"
+        )
+
+    # Or with manual path resolution:
+    @static
+    async def agent_file(agent_id: str, file_type: str) -> StaticFile:
+        path = resolve_agent_file(agent_id, file_type)
+        return StaticFile(path=path)
 """
 
 __version__ = "0.1.3"
@@ -97,6 +115,7 @@ from .errors import (
     CommandNotFoundError,
     InternalError,
     MessageHandlerNotFoundError,
+    StaticHandlerNotFoundError,
     UploadHandlerNotFoundError,
     UploadValidationError,
     ValidationError,
@@ -105,6 +124,7 @@ from .errors import (
 from .generator import generate_typescript
 from .registry import CommandInfo, CommandRegistry, command, get_registry, message
 from .runner import run
+from .static import StaticFile, StaticInfo, static
 from .upload import UploadFile, UploadInfo, upload
 from .websocket import WebSocket, MessageHandlerInfo
 
@@ -116,6 +136,7 @@ __all__ = [
     "command",
     "message",
     "upload",
+    "static",
     "run",
     # Streaming
     "Channel",
@@ -127,6 +148,9 @@ __all__ = [
     # Upload
     "UploadFile",
     "UploadInfo",
+    # Static
+    "StaticFile",
+    "StaticInfo",
     # Registry
     "get_registry",
     "CommandRegistry",
@@ -144,4 +168,5 @@ __all__ = [
     "MessageHandlerNotFoundError",
     "UploadHandlerNotFoundError",
     "UploadValidationError",
+    "StaticHandlerNotFoundError",
 ]

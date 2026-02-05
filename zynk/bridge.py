@@ -16,7 +16,7 @@ from typing import Any, Union, get_args, get_origin
 from fastapi import FastAPI, File, Request, UploadFile as FastAPIUploadFile
 from fastapi import WebSocket as FastAPIWebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 from rich.console import Console
@@ -29,6 +29,7 @@ from .errors import (
     CommandExecutionError,
     CommandNotFoundError,
     InternalError,
+    StaticHandlerNotFoundError,
     UploadHandlerNotFoundError,
     UploadValidationError,
     ValidationError,
@@ -36,6 +37,7 @@ from .errors import (
 from .generator import generate_typescript
 from .registry import CommandInfo, get_registry
 from .upload import UploadFile, UploadInfo
+from .static import StaticFile, StaticInfo
 from .websocket import WebSocket
 
 logger = logging.getLogger(__name__)
@@ -348,6 +350,73 @@ class Bridge:
 
             return {"result": result}
 
+        @self.app.get("/static/{handler_name}")
+        async def static_endpoint(handler_name: str, request: Request):
+            """Serve static files; query params are passed to the handler."""
+            registry = get_registry()
+            static_handler = registry.get_static(handler_name)
+
+            if not static_handler:
+                raise StaticHandlerNotFoundError(handler_name)
+
+            args = dict(request.query_params)
+            result = await self._execute_static(static_handler, args)
+            return FileResponse(
+                path=result.path,
+                media_type=result.guess_content_type(),
+                headers={"X-Content-Type-Options": "nosniff", **result.headers},
+            )
+
+    async def _execute_static(
+        self,
+        handler: StaticInfo,
+        args: dict[str, Any],
+    ) -> StaticFile:
+        """
+        Execute a static file handler.
+
+        Args:
+            handler: The static handler info.
+            args: Query parameter arguments.
+
+        Returns:
+            The StaticFile result.
+        """
+        try:
+            kwargs = {}
+            for param_name, param_type in handler.params.items():
+                if param_name in args:
+                    value = args[param_name]
+                    if param_type is int:
+                        value = int(value)
+                    elif param_type is float:
+                        value = float(value)
+                    elif param_type is bool:
+                        value = value.lower() in ("true", "1", "yes")
+                    kwargs[param_name] = value
+                elif param_name not in handler.optional_params:
+                    raise ValidationError(f"Missing required parameter: {param_name}")
+
+            if handler.is_async:
+                result = await handler.func(**kwargs)
+            else:
+                result = handler.func(**kwargs)
+
+            if not isinstance(result, StaticFile):
+                raise CommandExecutionError(
+                    f"Static handler '{handler.name}' must return a StaticFile"
+                )
+
+            return result
+
+        except FileNotFoundError as e:
+            raise ValidationError(str(e))
+        except ValueError as e:
+            raise ValidationError(str(e))
+        except Exception as e:
+            logger.exception(f"Static handler '{handler.name}' failed")
+            raise CommandExecutionError(str(e))
+
     async def _execute_upload(
         self,
         handler: UploadInfo,
@@ -408,7 +477,7 @@ class Bridge:
         @self.app.exception_handler(BridgeError)
         async def bridge_error_handler(request: Request, exc: BridgeError):
             status_code = 400
-            if isinstance(exc, (CommandNotFoundError, UploadHandlerNotFoundError)):
+            if isinstance(exc, (CommandNotFoundError, UploadHandlerNotFoundError, StaticHandlerNotFoundError)):
                 status_code = 404
             elif isinstance(exc, InternalError):
                 status_code = 500
@@ -541,6 +610,7 @@ class Bridge:
         commands = registry.get_all_commands()
         message_handlers = registry.get_all_message_handlers()
         uploads = registry.get_all_uploads()
+        statics = registry.get_all_statics()
 
         mode = "Development" if dev else "Production"
 
@@ -549,6 +619,8 @@ Mode:       {mode}
 Commands:   {len(commands)}"""
         if uploads:
             content += f"\nUploads:    {len(uploads)}"
+        if statics:
+            content += f"\nStatic:     {len(statics)}"
         if message_handlers:
             content += f"\nWebSockets: {len(message_handlers)}"
         if self.generate_ts:
@@ -572,6 +644,10 @@ Commands:   {len(commands)}"""
                     logger.debug(
                         f"  - /upload/{upload.name}{multi_marker} ({upload.module})"
                     )
+            if statics:
+                logger.debug("Registered static handlers:")
+                for static in statics.values():
+                    logger.debug(f"  - /static/{static.name} ({static.module})")
             if message_handlers:
                 logger.debug("Registered message handlers:")
                 for handler in message_handlers.values():
