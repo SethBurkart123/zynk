@@ -11,6 +11,8 @@ import asyncio
 import json
 import logging
 import types
+from collections.abc import Callable
+from contextlib import asynccontextmanager
 from typing import Any, Union, get_args, get_origin
 
 from fastapi import FastAPI, File, Request, UploadFile as FastAPIUploadFile
@@ -148,6 +150,7 @@ class Bridge:
         cors_origins: list[str] | None = None,
         title: str = "Zynk API",
         debug: bool = False,
+        app_init: str | None = None,
         reload_includes: list[str] | None = None,
         reload_excludes: list[str] | None = None,
     ):
@@ -171,13 +174,26 @@ class Bridge:
         self.cors_origins = cors_origins or ["*"]
         self.title = title
         self.debug = debug
+        self.app_init = app_init
         self.reload_includes = reload_includes
         self.reload_excludes = reload_excludes
         self._ts_generated = False
+        self._shutdown_callbacks: list[Callable[[], Any]] = []
 
         setup_logging(logging.DEBUG if debug else logging.INFO, debug=debug)
 
-        self.app = FastAPI(title=title)
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):
+            yield
+            for callback in self._shutdown_callbacks:
+                try:
+                    result = callback()
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as e:
+                    logger.warning(f"Shutdown callback error: {e}")
+
+        self.app = FastAPI(title=title, lifespan=lifespan)
 
         self.app.add_middleware(
             CORSMiddleware,
@@ -189,6 +205,10 @@ class Bridge:
 
         self._setup_routes()
         self._setup_error_handlers()
+
+    def on_shutdown(self, callback: Callable[[], Any]) -> None:
+        """Register a callback to run on server shutdown."""
+        self._shutdown_callbacks.append(callback)
 
     def _setup_routes(self) -> None:
         """Setup the API routes."""
@@ -477,7 +497,14 @@ class Bridge:
         @self.app.exception_handler(BridgeError)
         async def bridge_error_handler(request: Request, exc: BridgeError):
             status_code = 400
-            if isinstance(exc, (CommandNotFoundError, UploadHandlerNotFoundError, StaticHandlerNotFoundError)):
+            if isinstance(
+                exc,
+                (
+                    CommandNotFoundError,
+                    UploadHandlerNotFoundError,
+                    StaticHandlerNotFoundError,
+                ),
+            ):
                 status_code = 404
             elif isinstance(exc, InternalError):
                 status_code = 500
@@ -677,6 +704,7 @@ Commands:   {len(commands)}"""
                 cors_origins=self.cors_origins,
                 title=self.title,
                 debug=self.debug,
+                app_init=self.app_init,
                 import_modules=list(command_modules),
             )
 

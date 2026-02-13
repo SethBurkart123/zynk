@@ -362,11 +362,11 @@ class TypeScriptGenerator:
                         if is_optional:
                             field_mappings.append(
                                 f"{ts_name}: {obj_ref}.{field_name} != null ? "
-                                f"{obj_ref}.{field_name}.map((item: unknown) => ({item_mapping})) : undefined"
+                                f"{obj_ref}.{field_name}.map((item: any) => ({item_mapping})) : undefined"
                             )
                         else:
                             field_mappings.append(
-                                f"{ts_name}: {obj_ref}.{field_name}.map((item: unknown) => ({item_mapping}))"
+                                f"{ts_name}: {obj_ref}.{field_name}.map((item: any) => ({item_mapping}))"
                             )
                     else:
                         field_mappings.append(f"{ts_name}: {obj_ref}.{field_name}")
@@ -599,11 +599,11 @@ class TypeScriptGenerator:
                 )
                 if response_mapping != "_r":
                     lines.append(
-                        f'    const _r = await request("{cmd.name}", {args_obj});'
+                        f'    const _r = await request<any>("{cmd.name}", {args_obj});'
                     )
                     if is_list_return:
                         lines.append(
-                            f"    return _r.map((_r: unknown) => ({response_mapping}));"
+                            f"    return _r.map((_r: any) => ({response_mapping}));"
                         )
                     else:
                         lines.append(f"    return {response_mapping};")
@@ -729,7 +729,6 @@ class TypeScriptGenerator:
         """
         lines = []
 
-        # Function name: {handler_name}Url (convert to camelCase)
         fn_name = python_name_to_camel_case(static.name) + "Url"
 
         # Build parameter types
@@ -757,7 +756,6 @@ class TypeScriptGenerator:
             lines.append("/**")
             for line in static.docstring.strip().split("\n"):
                 lines.append(f" * {line.strip()}")
-            lines.append(" * @returns URL string for the static file")
             lines.append(" */")
 
         # Generate function signature
@@ -771,11 +769,15 @@ class TypeScriptGenerator:
 
         for ts_name, py_name, is_optional in param_mapping:
             if is_optional:
-                lines.append(f"    if (args.{ts_name} !== undefined) params.set(\"{py_name}\", String(args.{ts_name}));")
+                lines.append(
+                    f'    if (args.{ts_name} !== undefined) params.set("{py_name}", String(args.{ts_name}));'
+                )
             else:
-                lines.append(f"    params.set(\"{py_name}\", String(args.{ts_name}));")
+                lines.append(f'    params.set("{py_name}", String(args.{ts_name}));')
 
-        lines.append(f'    return `${{getBaseUrl()}}/static/{static.name}?${{params}}`;')
+        lines.append(
+            f"    return `${{getBaseUrl()}}/static/{static.name}?${{params}}`;"
+        )
         lines.append("}")
 
         return "\n".join(lines)

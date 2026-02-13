@@ -11,6 +11,8 @@ import asyncio
 import json
 import logging
 import types
+from collections.abc import Callable
+from contextlib import asynccontextmanager
 from typing import Any, Union, get_args, get_origin
 
 from fastapi import FastAPI, File, Request, UploadFile as FastAPIUploadFile
@@ -174,10 +176,22 @@ class Bridge:
         self.reload_includes = reload_includes
         self.reload_excludes = reload_excludes
         self._ts_generated = False
+        self._shutdown_callbacks: list[Callable[[], Any]] = []
 
         setup_logging(logging.DEBUG if debug else logging.INFO, debug=debug)
 
-        self.app = FastAPI(title=title)
+        @asynccontextmanager
+        async def lifespan(app: FastAPI):
+            yield
+            for callback in self._shutdown_callbacks:
+                try:
+                    result = callback()
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as e:
+                    logger.warning(f"Shutdown callback error: {e}")
+
+        self.app = FastAPI(title=title, lifespan=lifespan)
 
         self.app.add_middleware(
             CORSMiddleware,
@@ -189,6 +203,10 @@ class Bridge:
 
         self._setup_routes()
         self._setup_error_handlers()
+
+    def on_shutdown(self, callback: Callable[[], Any]) -> None:
+        """Register a callback to run on server shutdown."""
+        self._shutdown_callbacks.append(callback)
 
     def _setup_routes(self) -> None:
         """Setup the API routes."""
@@ -352,33 +370,19 @@ class Bridge:
 
         @self.app.get("/static/{handler_name}")
         async def static_endpoint(handler_name: str, request: Request):
-            """
-            Serve static files through resolver functions.
-
-            Query parameters are passed to the handler function as arguments.
-            """
+            """Serve static files; query params are passed to the handler."""
             registry = get_registry()
             static_handler = registry.get_static(handler_name)
 
             if not static_handler:
                 raise StaticHandlerNotFoundError(handler_name)
 
-            # Parse query params into args
             args = dict(request.query_params)
-
-            # Execute resolver function
             result = await self._execute_static(static_handler, args)
-
-            # Build response headers
-            headers = {
-                "X-Content-Type-Options": "nosniff",
-                **result.headers,
-            }
-
             return FileResponse(
                 path=result.path,
                 media_type=result.guess_content_type(),
-                headers=headers,
+                headers={"X-Content-Type-Options": "nosniff", **result.headers},
             )
 
     async def _execute_static(
@@ -400,7 +404,6 @@ class Bridge:
             kwargs = {}
             for param_name, param_type in handler.params.items():
                 if param_name in args:
-                    # Convert string params to expected types
                     value = args[param_name]
                     if param_type is int:
                         value = int(value)
@@ -492,7 +495,14 @@ class Bridge:
         @self.app.exception_handler(BridgeError)
         async def bridge_error_handler(request: Request, exc: BridgeError):
             status_code = 400
-            if isinstance(exc, (CommandNotFoundError, UploadHandlerNotFoundError, StaticHandlerNotFoundError)):
+            if isinstance(
+                exc,
+                (
+                    CommandNotFoundError,
+                    UploadHandlerNotFoundError,
+                    StaticHandlerNotFoundError,
+                ),
+            ):
                 status_code = 404
             elif isinstance(exc, InternalError):
                 status_code = 500

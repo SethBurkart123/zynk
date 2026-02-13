@@ -1,8 +1,5 @@
 """
-Static File Serving Module
-
-Provides static file serving support for Zynk with type-safe URL generation.
-Allows serving files through resolver functions with full control over access.
+Static file serving for Zynk. Resolver functions return StaticFile; params become query args.
 """
 
 from __future__ import annotations
@@ -30,17 +27,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 
 class StaticFile:
-    """
-    Represents a file to be served statically.
-
-    Wraps a file path with optional content type override.
-    Includes security helpers for safe path resolution.
-
-    Attributes:
-        path: The resolved file path.
-        content_type: MIME type (None = auto-detect from extension).
-        headers: Additional headers to include in response.
-    """
+    """File to serve statically; path with optional content_type and headers."""
 
     def __init__(
         self,
@@ -52,7 +39,6 @@ class StaticFile:
         self.content_type = content_type
         self.headers = headers or {}
 
-        # Security: ensure file exists and is a regular file
         if not self.path.exists():
             raise FileNotFoundError(f"File not found: {self.path}")
         if not self.path.is_file():
@@ -65,28 +51,10 @@ class StaticFile:
         filename: str,
         content_type: str | None = None,
     ) -> "StaticFile":
-        """
-        Safely resolve a file within a directory.
-
-        Prevents path traversal attacks by ensuring the resolved path
-        is within the base directory.
-
-        Args:
-            base_dir: The base directory to serve from.
-            filename: The filename (may include subdirectories).
-            content_type: Optional MIME type override.
-
-        Returns:
-            A StaticFile instance.
-
-        Raises:
-            ValueError: If path traversal is detected.
-            FileNotFoundError: If the file doesn't exist.
-        """
+        """Resolve a file under base_dir; raises ValueError if path escapes base."""
         base = Path(base_dir).resolve()
         target = (base / filename).resolve()
 
-        # Security: prevent path traversal
         if not target.is_relative_to(base):
             raise ValueError("Path traversal detected")
 
@@ -106,11 +74,7 @@ class StaticFile:
 
 @dataclass
 class StaticInfo:
-    """
-    Information about a registered static file handler.
-
-    Stores metadata about static handlers for routing and TypeScript generation.
-    """
+    """Metadata for a registered static file handler."""
 
     name: str
     func: Callable[..., Any]
@@ -127,33 +91,7 @@ def static(
     *,
     name: str | None = None,
 ) -> F | Callable[[F], F]:
-    """
-    Decorator to register a function as a static file handler.
-
-    The decorated function should accept parameters and return a StaticFile.
-    The parameters become query string arguments in the generated URL.
-
-    Args:
-        fn: The function to decorate (when used without parentheses).
-        name: Custom name for the handler. Defaults to function name.
-
-    Returns:
-        The decorated function.
-
-    Example:
-        @static
-        async def agent_file(agent_id: str, file_type: str) -> StaticFile:
-            path = get_file_path(agent_id, file_type)
-            return StaticFile(path=path)
-
-        # Safe directory-based serving:
-        @static
-        async def user_avatar(user_id: str) -> StaticFile:
-            return StaticFile.from_directory(
-                base_dir=AVATARS_DIR,
-                filename=f"{user_id}.png"
-            )
-    """
+    """Register a function as a static file handler; params become URL query args."""
 
     def decorator(func: F) -> F:
         from .registry import get_registry
@@ -163,7 +101,6 @@ def static(
         docstring = func.__doc__
         module = func.__module__
 
-        # Get type hints
         try:
             hints = get_type_hints(func)
         except Exception:
@@ -171,7 +108,6 @@ def static(
 
         sig = inspect.signature(func)
 
-        # Extract parameters
         params: dict[str, Any] = {}
         optional_params: set[str] = set()
 
@@ -192,10 +128,8 @@ def static(
             if param.default is not inspect.Parameter.empty:
                 optional_params.add(param_name)
 
-        # Get return type
         return_type = hints.get("return", None)
 
-        # Create static info
         static_info = StaticInfo(
             name=handler_name,
             func=func,
@@ -207,11 +141,9 @@ def static(
             optional_params=optional_params,
         )
 
-        # Register with the registry
         registry = get_registry()
         registry.register_static(static_info)
 
-        # Collect models from params
         for param_type in params.values():
             registry.collect_models_from_type(param_type)
 

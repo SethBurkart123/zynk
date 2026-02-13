@@ -89,13 +89,11 @@ For static file serving:
 
     @static
     async def user_avatar(user_id: str) -> StaticFile:
-        # Safe directory-based serving (prevents path traversal)
         return StaticFile.from_directory(
             base_dir=AVATARS_DIR,
             filename=f"{user_id}.png"
         )
 
-    # Or with manual path resolution:
     @static
     async def agent_file(agent_id: str, file_type: str) -> StaticFile:
         path = resolve_agent_file(agent_id, file_type)
