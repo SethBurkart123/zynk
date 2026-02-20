@@ -150,6 +150,7 @@ class Bridge:
         cors_origins: list[str] | None = None,
         title: str = "Zynk API",
         debug: bool = False,
+        app_init: str | None = None,
         reload_includes: list[str] | None = None,
         reload_excludes: list[str] | None = None,
     ):
@@ -173,6 +174,7 @@ class Bridge:
         self.cors_origins = cors_origins or ["*"]
         self.title = title
         self.debug = debug
+        self.app_init = app_init
         self.reload_includes = reload_includes
         self.reload_excludes = reload_excludes
         self._ts_generated = False
@@ -368,7 +370,7 @@ class Bridge:
 
             return {"result": result}
 
-        @self.app.get("/static/{handler_name}")
+        @self.app.api_route("/static/{handler_name}", methods=["GET", "HEAD"])
         async def static_endpoint(handler_name: str, request: Request):
             """Serve static files; query params are passed to the handler."""
             registry = get_registry()
@@ -702,6 +704,7 @@ Commands:   {len(commands)}"""
                 cors_origins=self.cors_origins,
                 title=self.title,
                 debug=self.debug,
+                app_init=self.app_init,
                 import_modules=list(command_modules),
             )
 
@@ -716,8 +719,22 @@ Commands:   {len(commands)}"""
             }
             if self.reload_includes is not None:
                 uvicorn_kwargs["reload_includes"] = self.reload_includes
-            if self.reload_excludes is not None:
-                uvicorn_kwargs["reload_excludes"] = self.reload_excludes
+
+            default_reload_excludes = [
+                ".git",
+                "__pycache__",
+                "node_modules",
+                ".venv",
+            ]
+            if self.reload_excludes is None:
+                uvicorn_kwargs["reload_excludes"] = default_reload_excludes
+            else:
+                merged_excludes = self.reload_excludes + [
+                    pattern
+                    for pattern in default_reload_excludes
+                    if pattern not in self.reload_excludes
+                ]
+                uvicorn_kwargs["reload_excludes"] = merged_excludes
 
             uvicorn.run(**uvicorn_kwargs)
         else:

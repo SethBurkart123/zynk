@@ -970,11 +970,11 @@ class TypeScriptGenerator:
             )
             if isinstance(event_type, type) and issubclass(event_type, BaseModel):
                 response_mapping = self._generate_response_field_mapping(
-                    event_type, "_d", models_to_generate
+                    event_type, "_raw", models_to_generate
                 )
-                if response_mapping != "_d":
+                if response_mapping != "_raw":
                     lines.append(
-                        f'        return this.on("{event_name}", (_d) => callback({response_mapping}));'
+                        f'        return this.on("{event_name}", (_d) => {{ const _raw = _d as any; return callback({response_mapping}); }});'
                     )
                 else:
                     lines.append(f'        return this.on("{event_name}", callback);')
@@ -1057,7 +1057,7 @@ export function getBaseUrl(): string {
     return _baseUrl;
 }
 
-export async function request<T>(command: string, args: unknown): Promise<T> {
+export async function request<T = any>(command: string, args: unknown): Promise<T> {
     const baseUrl = getBaseUrl();
     const url = `${baseUrl}/command/${command}`;
 
@@ -1082,7 +1082,7 @@ export async function request<T>(command: string, args: unknown): Promise<T> {
     return data.result as T;
 }
 
-export function createChannel<T>(command: string, args: unknown): BridgeChannel<T> {
+export function createChannel<T = any>(command: string, args: unknown): BridgeChannel<T> {
     const baseUrl = getBaseUrl();
     const url = `${baseUrl}/channel/${command}`;
 

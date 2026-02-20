@@ -30,6 +30,7 @@ def set_config(
     title: str = "Zynk API",
     debug: bool = False,
     main_module: str | None = None,
+    app_init: str | None = None,
     import_modules: list[str] | None = None,
 ) -> None:
     """
@@ -46,6 +47,7 @@ def set_config(
         "title": title,
         "debug": debug,
         "main_module": main_module,
+        "app_init": app_init,
         "import_modules": import_modules or [],
     }
     # Store in environment variable for subprocess access
@@ -66,6 +68,7 @@ def get_config() -> dict[str, Any]:
         "title": "Zynk API",
         "debug": False,
         "main_module": None,
+        "app_init": None,
         "import_modules": [],
     }
 
@@ -105,9 +108,23 @@ def create_app() -> FastAPI:
         cors_origins=config.get("cors_origins"),
         title=config.get("title", "Zynk API"),
         debug=config.get("debug", False),
+        app_init=config.get("app_init"),
     )
 
     bridge.generate_typescript_client()
+
+    app_init = config.get("app_init")
+    if app_init:
+        try:
+            module_name, func_name = app_init.split(":", 1)
+            module = importlib.import_module(module_name)
+            init_fn = getattr(module, func_name, None)
+            if callable(init_fn):
+                init_fn(bridge.app)
+            else:
+                logger.error("App init '%s' not callable", app_init)
+        except Exception as exc:
+            logger.error("Failed app init '%s': %s", app_init, exc)
 
     logger.debug("Application reloaded")
 

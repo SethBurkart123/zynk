@@ -370,7 +370,7 @@ class Bridge:
 
             return {"result": result}
 
-        @self.app.get("/static/{handler_name}")
+        @self.app.api_route("/static/{handler_name}", methods=["GET", "HEAD"])
         async def static_endpoint(handler_name: str, request: Request):
             """Serve static files; query params are passed to the handler."""
             registry = get_registry()
@@ -719,8 +719,22 @@ Commands:   {len(commands)}"""
             }
             if self.reload_includes is not None:
                 uvicorn_kwargs["reload_includes"] = self.reload_includes
-            if self.reload_excludes is not None:
-                uvicorn_kwargs["reload_excludes"] = self.reload_excludes
+
+            default_reload_excludes = [
+                ".git",
+                "__pycache__",
+                "node_modules",
+                ".venv",
+            ]
+            if self.reload_excludes is None:
+                uvicorn_kwargs["reload_excludes"] = default_reload_excludes
+            else:
+                merged_excludes = self.reload_excludes + [
+                    pattern
+                    for pattern in default_reload_excludes
+                    if pattern not in self.reload_excludes
+                ]
+                uvicorn_kwargs["reload_excludes"] = merged_excludes
 
             uvicorn.run(**uvicorn_kwargs)
         else:
