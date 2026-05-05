@@ -13,6 +13,7 @@ import logging
 import types
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Union, get_args, get_origin
 
 from fastapi import FastAPI, File, Request, UploadFile as FastAPIUploadFile
@@ -151,6 +152,7 @@ class Bridge:
         title: str = "Zynk API",
         debug: bool = False,
         app_init: str | None = None,
+        reload_dirs: list[str] | None = None,
         reload_includes: list[str] | None = None,
         reload_excludes: list[str] | None = None,
     ):
@@ -165,6 +167,8 @@ class Bridge:
             cors_origins: List of allowed CORS origins. Defaults to ["*"].
             title: API title for documentation.
             debug: Enable debug logging.
+            reload_dirs: Directories to watch for changes (dev mode only).
+                         Defaults to ["."] (current working directory).
             reload_includes: Glob patterns to include in file watching (dev mode only).
             reload_excludes: Glob patterns to exclude from file watching (dev mode only).
         """
@@ -175,6 +179,7 @@ class Bridge:
         self.title = title
         self.debug = debug
         self.app_init = app_init
+        self.reload_dirs = reload_dirs
         self.reload_includes = reload_includes
         self.reload_excludes = reload_excludes
         self._ts_generated = False
@@ -639,104 +644,12 @@ class Bridge:
         uploads = registry.get_all_uploads()
         statics = registry.get_all_statics()
 
-        mode = "Development" if dev else "Production"
-
-        content = f"""Server:     http://{self.host}:{self.port}
-Mode:       {mode}
-Commands:   {len(commands)}"""
-        if uploads:
-            content += f"\nUploads:    {len(uploads)}"
-        if statics:
-            content += f"\nStatic:     {len(statics)}"
-        if message_handlers:
-            content += f"\nWebSockets: {len(message_handlers)}"
-        if self.generate_ts:
-            content += f"\nTypeScript: {self.generate_ts}"
-
-        console = Console()
-        panel = Panel.fit(content, title=self.title, border_style="blue")
-        console.print("")
-        console.print(panel)
-        console.print("")
-
+        self._print_startup_banner(dev, commands, message_handlers, uploads, statics)
         if self.debug:
-            logger.debug("Registered commands:")
-            for cmd in commands.values():
-                channel_marker = " [channel]" if cmd.has_channel else ""
-                logger.debug(f"  - {cmd.name}{channel_marker} ({cmd.module})")
-            if uploads:
-                logger.debug("Registered upload handlers:")
-                for upload in uploads.values():
-                    multi_marker = " [multi]" if upload.is_multi_file else ""
-                    logger.debug(
-                        f"  - /upload/{upload.name}{multi_marker} ({upload.module})"
-                    )
-            if statics:
-                logger.debug("Registered static handlers:")
-                for static in statics.values():
-                    logger.debug(f"  - /static/{static.name} ({static.module})")
-            if message_handlers:
-                logger.debug("Registered message handlers:")
-                for handler in message_handlers.values():
-                    logger.debug(f"  - /ws/{handler.name} ({handler.module})")
+            self._log_registered_handlers(commands, message_handlers, uploads, statics)
 
         if dev:
-            command_modules = set()
-            for cmd in commands.values():
-                module_name = cmd.module
-                if not module_name.startswith("zynk"):
-                    command_modules.add(module_name)
-            for upload in uploads.values():
-                module_name = upload.module
-                if not module_name.startswith("zynk"):
-                    command_modules.add(module_name)
-            for handler in message_handlers.values():
-                module_name = handler.module
-                if not module_name.startswith("zynk"):
-                    command_modules.add(module_name)
-
-            from . import server
-
-            server.set_config(
-                generate_ts=self.generate_ts,
-                host=self.host,
-                port=self.port,
-                cors_origins=self.cors_origins,
-                title=self.title,
-                debug=self.debug,
-                app_init=self.app_init,
-                import_modules=list(command_modules),
-            )
-
-            uvicorn_kwargs = {
-                "app": "zynk.server:create_app",
-                "host": self.host,
-                "port": self.port,
-                "reload": True,
-                "reload_dirs": ["."],
-                "factory": True,
-                "log_level": "debug" if self.debug else "info",
-            }
-            if self.reload_includes is not None:
-                uvicorn_kwargs["reload_includes"] = self.reload_includes
-
-            default_reload_excludes = [
-                ".git",
-                "__pycache__",
-                "node_modules",
-                ".venv",
-            ]
-            if self.reload_excludes is None:
-                uvicorn_kwargs["reload_excludes"] = default_reload_excludes
-            else:
-                merged_excludes = self.reload_excludes + [
-                    pattern
-                    for pattern in default_reload_excludes
-                    if pattern not in self.reload_excludes
-                ]
-                uvicorn_kwargs["reload_excludes"] = merged_excludes
-
-            uvicorn.run(**uvicorn_kwargs)
+            self._run_dev(uvicorn, commands, message_handlers, uploads)
         else:
             uvicorn.run(
                 self.app,
@@ -744,6 +657,107 @@ Commands:   {len(commands)}"""
                 port=self.port,
                 log_level="debug" if self.debug else "info",
             )
+
+    def _print_startup_banner(self, dev, commands, message_handlers, uploads, statics) -> None:
+        mode = "Development" if dev else "Production"
+        lines = [
+            f"Server:     http://{self.host}:{self.port}",
+            f"Mode:       {mode}",
+            f"Commands:   {len(commands)}",
+        ]
+        if uploads:
+            lines.append(f"Uploads:    {len(uploads)}")
+        if statics:
+            lines.append(f"Static:     {len(statics)}")
+        if message_handlers:
+            lines.append(f"WebSockets: {len(message_handlers)}")
+        if self.generate_ts:
+            lines.append(f"TypeScript: {self.generate_ts}")
+
+        console = Console()
+        panel = Panel.fit("\n".join(lines), title=self.title, border_style="blue")
+        console.print("")
+        console.print(panel)
+        console.print("")
+
+    def _log_registered_handlers(self, commands, message_handlers, uploads, statics) -> None:
+        logger.debug("Registered commands:")
+        for cmd in commands.values():
+            channel_marker = " [channel]" if cmd.has_channel else ""
+            logger.debug(f"  - {cmd.name}{channel_marker} ({cmd.module})")
+        if uploads:
+            logger.debug("Registered upload handlers:")
+            for upload in uploads.values():
+                multi_marker = " [multi]" if upload.is_multi_file else ""
+                logger.debug(f"  - /upload/{upload.name}{multi_marker} ({upload.module})")
+        if statics:
+            logger.debug("Registered static handlers:")
+            for static in statics.values():
+                logger.debug(f"  - /static/{static.name} ({static.module})")
+        if message_handlers:
+            logger.debug("Registered message handlers:")
+            for handler in message_handlers.values():
+                logger.debug(f"  - /ws/{handler.name} ({handler.module})")
+
+    def _run_dev(self, uvicorn, commands, message_handlers, uploads) -> None:
+        from . import server
+
+        user_modules = self._collect_user_modules(commands, message_handlers, uploads)
+        server.set_config(
+            generate_ts=self.generate_ts,
+            host=self.host,
+            port=self.port,
+            cors_origins=self.cors_origins,
+            title=self.title,
+            debug=self.debug,
+            app_init=self.app_init,
+            import_modules=user_modules,
+        )
+
+        uvicorn.run(
+            app="zynk.server:create_app",
+            host=self.host,
+            port=self.port,
+            reload=True,
+            reload_dirs=self.reload_dirs or ["."],
+            reload_includes=self._normalize_patterns(self.reload_includes),
+            reload_excludes=self._build_reload_excludes(),
+            factory=True,
+            log_level="debug" if self.debug else "info",
+        )
+
+    @staticmethod
+    def _collect_user_modules(commands, message_handlers, uploads) -> list[str]:
+        modules: set[str] = set()
+        for source in (commands.values(), message_handlers.values(), uploads.values()):
+            for item in source:
+                if not item.module.startswith("zynk"):
+                    modules.add(item.module)
+        return list(modules)
+
+    def _build_reload_excludes(self) -> list[str]:
+        defaults = [".git", "__pycache__", "node_modules", ".venv"]
+        if self.reload_excludes is None:
+            return defaults
+        user = self._normalize_patterns(self.reload_excludes) or []
+        return user + [d for d in defaults if d not in user]
+
+    @staticmethod
+    def _normalize_patterns(patterns: list[str] | None) -> list[str] | None:
+        if patterns is None:
+            return None
+        cwd = Path.cwd()
+        normalized = []
+        for pattern in patterns:
+            p = Path(pattern)
+            if not p.is_absolute():
+                normalized.append(pattern)
+                continue
+            try:
+                normalized.append(str(p.relative_to(cwd)))
+            except ValueError:
+                normalized.append(pattern)
+        return normalized
 
 
 # Global bridge instance for factory pattern
