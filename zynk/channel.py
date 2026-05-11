@@ -14,6 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Generic, TypeVar
+
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -109,7 +110,7 @@ class Channel(Generic[T]):
     def send_model(self, model: Any) -> None:
         """
         Send a Pydantic model as a typed SSE event (sync version).
-        
+
         Uses the model's `event` field as the SSE event type.
         The rest of the model data becomes the SSE data payload.
         """
@@ -119,7 +120,7 @@ class Channel(Generic[T]):
 
         event_name = getattr(model, "event", "message")
         data = model.model_dump(exclude={"event"})
-        
+
         message = ChannelMessage(
             event=event_name,
             data=data,

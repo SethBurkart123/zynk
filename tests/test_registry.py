@@ -198,3 +198,44 @@ def test_get_all_commands():
     assert len(commands) == 2
     assert "cmd1" in commands
     assert "cmd2" in commands
+
+
+def test_api_graph_contains_registered_command():
+    """Test that registration also populates the unified API graph."""
+    @command
+    async def get_user(user_id: int) -> TestUser:
+        return TestUser(id=user_id, name="Test")
+
+    graph = get_registry().get_api_graph()
+    endpoint = graph.endpoints["get_user"]
+
+    assert endpoint.kind == "rpc"
+    assert endpoint.params[0].py_name == "user_id"
+    assert endpoint.params[0].ts_name == "userId"
+    assert endpoint.returns.kind == "model"
+    assert endpoint.returns.name == "TestUser"
+    assert "TestUser" in graph.models
+
+
+def test_command_deps_execute_before_handler():
+    """Test simple per-command dependency hooks."""
+    calls: list[str] = []
+
+    async def require_auth() -> None:
+        calls.append("dep")
+
+    @command(deps=[require_auth])
+    async def protected() -> str:
+        calls.append("handler")
+        return "ok"
+
+    cmd = get_registry().get_command("protected")
+    assert cmd is not None
+    import asyncio
+
+    from zynk.runtime.dispatch import execute_command
+
+    result = asyncio.run(execute_command(cmd, {}))
+
+    assert result == "ok"
+    assert calls == ["dep", "handler"]

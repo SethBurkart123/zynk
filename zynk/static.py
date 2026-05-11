@@ -8,12 +8,12 @@ import inspect
 import logging
 import mimetypes
 import types
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from typing import (
     Any,
-    Callable,
     TypeVar,
     Union,
     get_args,
@@ -50,7 +50,7 @@ class StaticFile:
         base_dir: Path | str,
         filename: str,
         content_type: str | None = None,
-    ) -> "StaticFile":
+    ) -> StaticFile:
         """Resolve a file under base_dir; raises ValueError if path escapes base."""
         base = Path(base_dir).resolve()
         target = (base / filename).resolve()

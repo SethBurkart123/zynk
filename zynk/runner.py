@@ -129,7 +129,7 @@ Commands:   {len(commands)}"""
         logger.info("Starting in development mode with hot-reload...")
 
         watch_dirs = reload_dirs or ["."]
-        
+
         # Default exclusions to prevent watching common non-source directories
         exclude_patterns = reload_excludes if reload_excludes is not None else [
             ".git",

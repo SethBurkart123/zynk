@@ -2,6 +2,7 @@
 Tests for the Zynk TypeScript generator module.
 """
 
+import importlib
 import os
 import tempfile
 
@@ -294,3 +295,41 @@ def test_type_mapping():
     assert generator._type_to_ts(bool, models) == "boolean"
     assert generator._type_to_ts(None, models) == "void"
     assert generator._type_to_ts(type(None), models) == "undefined"
+
+
+def test_import_registered_custom_generator(temp_dir, monkeypatch):
+    """Test adding a new language by importing a generator module."""
+    package_dir = os.path.join(temp_dir, "custom_generators")
+    os.mkdir(package_dir)
+    with open(os.path.join(package_dir, "__init__.py"), "w") as f:
+        f.write("")
+    with open(os.path.join(package_dir, "rust.py"), "w") as f:
+        f.write(
+            "from pathlib import Path\n"
+            "from zynk.codegen import GeneratedFile, GenerationResult, register_generator\n"
+            "\n"
+            "class RustClientGenerator:\n"
+            "    language = 'rust'\n"
+            "    def generate(self, output_path: Path, context):\n"
+            "        names = ','.join(sorted(context.graph.endpoints))\n"
+            "        return GenerationResult([GeneratedFile(output_path, '// endpoints: ' + names)])\n"
+            "\n"
+            "register_generator(RustClientGenerator(), replace=True)\n"
+        )
+
+    @command
+    async def hello(name: str) -> str:
+        return name
+
+    monkeypatch.syspath_prepend(temp_dir)
+    importlib.import_module("custom_generators.rust")
+
+    from zynk.codegen import generate_client, list_generators
+
+    output_path = os.path.join(temp_dir, "client.rs")
+    result = generate_client(output_path, language="rust")
+
+    assert "rust" in list_generators()
+    assert len(result.files) == 1
+    with open(output_path) as f:
+        assert f.read() == "// endpoints: hello"

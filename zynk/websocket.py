@@ -10,12 +10,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable, Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar, get_type_hints
 from enum import Enum
+from typing import Any, Generic, TypeVar, get_type_hints
 
-from fastapi import WebSocket as FastAPIWebSocket, WebSocketDisconnect
+from fastapi import WebSocket as FastAPIWebSocket
+from fastapi import WebSocketDisconnect
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ class WebSocketMessage:
         return json.dumps({"event": self.event, "data": self.data})
 
     @classmethod
-    def from_json(cls, json_str: str) -> "WebSocketMessage":
+    def from_json(cls, json_str: str) -> WebSocketMessage:
         """Parse a JSON string into a WebSocketMessage."""
         parsed = json.loads(json_str)
         return cls(event=parsed.get("event", "message"), data=parsed.get("data", {}))

@@ -106,6 +106,15 @@ __author__ = "Zynk Team"
 # Core exports
 from .bridge import Bridge
 from .channel import Channel, ChannelManager, channel_manager
+from .codegen import (
+    CodeGenerator,
+    GeneratedFile,
+    GenerationContext,
+    GenerationResult,
+    generate_client,
+    list_generators,
+    register_generator,
+)
 from .errors import (
     BridgeError,
     ChannelError,
@@ -124,7 +133,7 @@ from .registry import CommandInfo, CommandRegistry, command, get_registry, messa
 from .runner import run
 from .static import StaticFile, StaticInfo, static
 from .upload import UploadFile, UploadInfo, upload
-from .websocket import WebSocket, MessageHandlerInfo
+from .websocket import MessageHandlerInfo, WebSocket
 
 __all__ = [
     # Version
@@ -153,8 +162,15 @@ __all__ = [
     "get_registry",
     "CommandRegistry",
     "CommandInfo",
-    # TypeScript generation
+    # Code generation
+    "CodeGenerator",
+    "GeneratedFile",
+    "GenerationContext",
+    "GenerationResult",
+    "generate_client",
     "generate_typescript",
+    "list_generators",
+    "register_generator",
     # Errors
     "BridgeError",
     "ValidationError",

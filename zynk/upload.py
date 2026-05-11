@@ -12,11 +12,11 @@ import inspect
 import logging
 import re
 import types
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import wraps
 from typing import (
     Any,
-    Callable,
     TypeVar,
     Union,
     get_args,

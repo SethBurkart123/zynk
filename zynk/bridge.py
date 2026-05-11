@@ -16,7 +16,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Union, get_args, get_origin
 
-from fastapi import FastAPI, File, Request, UploadFile as FastAPIUploadFile
+from fastapi import FastAPI, Request
+from fastapi import UploadFile as FastAPIUploadFile
 from fastapi import WebSocket as FastAPIWebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -29,7 +30,6 @@ from rich.panel import Panel
 from .channel import Channel
 from .errors import (
     BridgeError,
-    CommandExecutionError,
     CommandNotFoundError,
     InternalError,
     StaticHandlerNotFoundError,
@@ -39,8 +39,20 @@ from .errors import (
 )
 from .generator import generate_typescript
 from .registry import CommandInfo, get_registry
-from .upload import UploadFile, UploadInfo
+from .runtime.dispatch import (
+    execute_channel_command as dispatch_channel_command,
+)
+from .runtime.dispatch import (
+    execute_command as dispatch_command,
+)
+from .runtime.dispatch import (
+    execute_static as dispatch_static,
+)
+from .runtime.dispatch import (
+    execute_upload as dispatch_upload,
+)
 from .static import StaticFile, StaticInfo
+from .upload import UploadFile, UploadInfo
 from .websocket import WebSocket
 
 logger = logging.getLogger(__name__)
@@ -211,6 +223,10 @@ class Bridge:
         self._setup_routes()
         self._setup_error_handlers()
 
+    def use(self, middleware_class: type, *args: Any, **kwargs: Any) -> None:
+        """Add a FastAPI/Starlette middleware to the underlying app."""
+        self.app.add_middleware(middleware_class, *args, **kwargs)
+
     def on_shutdown(self, callback: Callable[[], Any]) -> None:
         """Register a callback to run on server shutdown."""
         self._shutdown_callbacks.append(callback)
@@ -330,11 +346,7 @@ class Bridge:
                 await ws.close(code=1011, reason=str(e))
 
         @self.app.post("/upload/{handler_name}")
-        async def upload_endpoint(
-            handler_name: str,
-            request: Request,
-            files: list[FastAPIUploadFile] = File(default=[]),
-        ):
+        async def upload_endpoint(handler_name: str, request: Request):
             """
             Handle file uploads with XMLHttpRequest progress support.
 
@@ -346,7 +358,6 @@ class Bridge:
             if not upload_handler:
                 raise UploadHandlerNotFoundError(handler_name)
 
-            # Parse additional args from _args form field
             form = await request.form()
             try:
                 args = json.loads(form.get("_args", "{}"))
@@ -355,6 +366,7 @@ class Bridge:
 
             # Convert FastAPI UploadFiles to our UploadFile wrapper
             upload_files: list[UploadFile] = []
+            files = [file for file in form.getlist("files") if isinstance(file, FastAPIUploadFile)]
             for f in files:
                 # Read content to get size
                 content = await f.read()
@@ -397,50 +409,7 @@ class Bridge:
         handler: StaticInfo,
         args: dict[str, Any],
     ) -> StaticFile:
-        """
-        Execute a static file handler.
-
-        Args:
-            handler: The static handler info.
-            args: Query parameter arguments.
-
-        Returns:
-            The StaticFile result.
-        """
-        try:
-            kwargs = {}
-            for param_name, param_type in handler.params.items():
-                if param_name in args:
-                    value = args[param_name]
-                    if param_type is int:
-                        value = int(value)
-                    elif param_type is float:
-                        value = float(value)
-                    elif param_type is bool:
-                        value = value.lower() in ("true", "1", "yes")
-                    kwargs[param_name] = value
-                elif param_name not in handler.optional_params:
-                    raise ValidationError(f"Missing required parameter: {param_name}")
-
-            if handler.is_async:
-                result = await handler.func(**kwargs)
-            else:
-                result = handler.func(**kwargs)
-
-            if not isinstance(result, StaticFile):
-                raise CommandExecutionError(
-                    f"Static handler '{handler.name}' must return a StaticFile"
-                )
-
-            return result
-
-        except FileNotFoundError as e:
-            raise ValidationError(str(e))
-        except ValueError as e:
-            raise ValidationError(str(e))
-        except Exception as e:
-            logger.exception(f"Static handler '{handler.name}' failed")
-            raise CommandExecutionError(str(e))
+        return await dispatch_static(handler, args)
 
     async def _execute_upload(
         self,
@@ -448,53 +417,7 @@ class Bridge:
         files: list[UploadFile],
         args: dict[str, Any],
     ) -> Any:
-        """
-        Execute an upload handler.
-
-        Args:
-            handler: The upload handler info.
-            files: List of uploaded files.
-            args: Additional arguments from _args.
-
-        Returns:
-            The handler result.
-        """
-        try:
-            kwargs = {}
-
-            # Add file(s) parameter
-            if handler.is_multi_file:
-                kwargs[handler.file_param] = files
-            else:
-                # Single file - take the first one
-                if not files:
-                    raise ValidationError("No file provided")
-                kwargs[handler.file_param] = files[0]
-
-            # Add other parameters
-            for param_name, param_type in handler.params.items():
-                if param_name in args:
-                    kwargs[param_name] = instantiate_model(args[param_name], param_type)
-
-            result = await handler.func(**kwargs)
-
-            if isinstance(result, BaseModel):
-                return result.model_dump()
-            elif isinstance(result, list):
-                return [
-                    item.model_dump() if isinstance(item, BaseModel) else item
-                    for item in result
-                ]
-
-            return result
-
-        except PydanticValidationError as e:
-            raise ValidationError(f"Validation failed: {e}")
-        except TypeError as e:
-            raise ValidationError(f"Invalid arguments: {e}")
-        except Exception as e:
-            logger.exception(f"Upload handler '{handler.name}' failed")
-            raise CommandExecutionError(str(e))
+        return await dispatch_upload(handler, files, args)
 
     def _setup_error_handlers(self) -> None:
         """Setup exception handlers."""
@@ -548,46 +471,7 @@ class Bridge:
         cmd: CommandInfo,
         args: dict[str, Any],
     ) -> Any:
-        """
-        Execute a command with the given arguments.
-
-        Args:
-            cmd: The command to execute.
-            args: The arguments dictionary.
-
-        Returns:
-            The command result.
-
-        Raises:
-            ValidationError: If argument validation fails.
-            CommandExecutionError: If command execution fails.
-        """
-        try:
-            kwargs = {}
-            for param_name, param_type in cmd.params.items():
-                if param_name in args:
-                    # Instantiate Pydantic models from dicts
-                    kwargs[param_name] = instantiate_model(args[param_name], param_type)
-
-            result = await cmd.func(**kwargs)
-
-            if isinstance(result, BaseModel):
-                return result.model_dump()
-            elif isinstance(result, list):
-                return [
-                    item.model_dump() if isinstance(item, BaseModel) else item
-                    for item in result
-                ]
-
-            return result
-
-        except PydanticValidationError as e:
-            raise ValidationError(f"Validation failed: {e}")
-        except TypeError as e:
-            raise ValidationError(f"Invalid arguments: {e}")
-        except Exception as e:
-            logger.exception(f"Command '{cmd.name}' failed")
-            raise CommandExecutionError(str(e))
+        return await dispatch_command(cmd, args)
 
     async def _execute_channel_command(
         self,
@@ -595,27 +479,7 @@ class Bridge:
         args: dict[str, Any],
         channel: Channel,
     ) -> None:
-        """
-        Execute a channel command in the background.
-
-        Args:
-            cmd: The command to execute.
-            args: The arguments dictionary.
-            channel: The channel for streaming responses.
-        """
-        try:
-            kwargs = {"channel": channel}
-            for param_name, param_type in cmd.params.items():
-                if param_name in args:
-                    # Instantiate Pydantic models from dicts
-                    kwargs[param_name] = instantiate_model(args[param_name], param_type)
-
-            await cmd.func(**kwargs)
-            await channel.close()
-
-        except Exception as e:
-            logger.exception(f"Channel command '{cmd.name}' failed")
-            await channel.send_error(str(e))
+        await dispatch_channel_command(cmd, args, channel)
 
     def generate_typescript_client(self) -> None:
         """Generate the TypeScript client if configured."""

@@ -17,11 +17,15 @@ from typing import TYPE_CHECKING, Any, Union, get_args, get_origin, get_type_hin
 
 from pydantic import BaseModel
 
+from .core.ir import Endpoint, Param
+from .core.naming import python_name_to_camel_case
+from .core.registry import ApiRegistry
+from .core.types import type_ref
 from .websocket import MessageHandlerInfo, WebSocket, _extract_event_types
 
 if TYPE_CHECKING:
-    from .upload import UploadInfo
     from .static import StaticInfo
+    from .upload import UploadInfo
 
 
 class CommandInfo:
@@ -66,11 +70,12 @@ class CommandRegistry:
     def __new__(cls) -> CommandRegistry:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
+            cls._instance._core = ApiRegistry.get_instance()
             cls._instance._commands: dict[str, CommandInfo] = {}
             cls._instance._models: dict[str, type[BaseModel]] = {}
             cls._instance._message_handlers: dict[str, MessageHandlerInfo] = {}
-            cls._instance._uploads: dict[str, "UploadInfo"] = {}
-            cls._instance._statics: dict[str, "StaticInfo"] = {}
+            cls._instance._uploads: dict[str, UploadInfo] = {}
+            cls._instance._statics: dict[str, StaticInfo] = {}
             cls._instance._initialized = True
         return cls._instance
 
@@ -84,12 +89,14 @@ class CommandRegistry:
     @classmethod
     def reset(cls) -> None:
         """Reset the registry (useful for testing)."""
+        ApiRegistry.reset()
         if cls._instance is not None:
             cls._instance._commands.clear()
             cls._instance._models.clear()
             cls._instance._message_handlers.clear()
             cls._instance._uploads.clear()
             cls._instance._statics.clear()
+            cls._instance._core = ApiRegistry.get_instance()
 
     def register(self, cmd: CommandInfo) -> None:
         """
@@ -106,11 +113,34 @@ class CommandRegistry:
                 f"Command names must be unique across all modules."
             )
         self._commands[cmd.name] = cmd
+        endpoint = Endpoint(
+            name=cmd.name,
+            kind="channel" if cmd.has_channel else "rpc",
+            func=cmd.func,
+            is_async=cmd.is_async,
+            module=cmd.module,
+            doc=cmd.docstring,
+            params=[
+                Param(
+                    py_name=param_name,
+                    ts_name=python_name_to_camel_case(param_name),
+                    type=type_ref(param_type),
+                    required=param_name not in cmd.optional_params,
+                )
+                for param_name, param_type in cmd.params.items()
+            ],
+            returns=type_ref(cmd.return_type),
+            channel_item=_extract_channel_item(cmd) if cmd.has_channel else None,
+            deps=getattr(cmd, "deps", []),
+            raw=cmd,
+        )
+        self._core.register_endpoint(endpoint)
 
     def register_model(self, model: type[BaseModel]) -> None:
         """Register a Pydantic model for TypeScript generation."""
         if model.__name__ not in self._models:
             self._models[model.__name__] = model
+        self._core.register_model(model)
 
     def get_command(self, name: str) -> CommandInfo | None:
         """Get a command by name."""
@@ -139,6 +169,21 @@ class CommandRegistry:
                 f"Handler names must be unique across all modules."
             )
         self._message_handlers[handler.name] = handler
+        self._core.register_endpoint(
+            Endpoint(
+                name=handler.name,
+                kind="ws",
+                func=handler.func,
+                is_async=True,
+                module=handler.module,
+                doc=handler.docstring,
+                params=[],
+                returns=type_ref(None),
+                server_events={name: type_ref(tp) for name, tp in handler.server_event_types.items()},
+                client_events={name: type_ref(tp) for name, tp in handler.client_event_types.items()},
+                raw=handler,
+            )
+        )
 
     def get_message_handler(self, name: str) -> MessageHandlerInfo | None:
         """Get a message handler by name."""
@@ -148,7 +193,7 @@ class CommandRegistry:
         """Get all registered message handlers."""
         return self._message_handlers.copy()
 
-    def register_upload(self, upload_info: "UploadInfo") -> None:
+    def register_upload(self, upload_info: UploadInfo) -> None:
         """
         Register an upload handler.
 
@@ -163,16 +208,41 @@ class CommandRegistry:
                 f"Handler names must be unique across all modules."
             )
         self._uploads[upload_info.name] = upload_info
+        self._core.register_endpoint(
+            Endpoint(
+                name=upload_info.name,
+                kind="upload",
+                func=upload_info.func,
+                is_async=upload_info.is_async,
+                module=upload_info.module,
+                doc=upload_info.docstring,
+                params=[
+                    Param(
+                        py_name=param_name,
+                        ts_name=python_name_to_camel_case(param_name),
+                        type=type_ref(param_type),
+                        required=param_name not in upload_info.optional_params,
+                    )
+                    for param_name, param_type in upload_info.params.items()
+                ],
+                returns=type_ref(upload_info.return_type),
+                file_param=upload_info.file_param,
+                multi_file=upload_info.is_multi_file,
+                max_size=upload_info.max_size,
+                allowed_types=list(upload_info.allowed_types),
+                raw=upload_info,
+            )
+        )
 
-    def get_upload(self, name: str) -> "UploadInfo | None":
+    def get_upload(self, name: str) -> UploadInfo | None:
         """Get an upload handler by name."""
         return self._uploads.get(name)
 
-    def get_all_uploads(self) -> dict[str, "UploadInfo"]:
+    def get_all_uploads(self) -> dict[str, UploadInfo]:
         """Get all registered upload handlers."""
         return self._uploads.copy()
 
-    def register_static(self, static_info: "StaticInfo") -> None:
+    def register_static(self, static_info: StaticInfo) -> None:
         """
         Register a static file handler.
 
@@ -187,14 +257,39 @@ class CommandRegistry:
                 f"Handler names must be unique across all modules."
             )
         self._statics[static_info.name] = static_info
+        self._core.register_endpoint(
+            Endpoint(
+                name=static_info.name,
+                kind="static",
+                func=static_info.func,
+                is_async=static_info.is_async,
+                module=static_info.module,
+                doc=static_info.docstring,
+                params=[
+                    Param(
+                        py_name=param_name,
+                        ts_name=python_name_to_camel_case(param_name),
+                        type=type_ref(param_type),
+                        required=param_name not in static_info.optional_params,
+                    )
+                    for param_name, param_type in static_info.params.items()
+                ],
+                returns=type_ref(static_info.return_type),
+                raw=static_info,
+            )
+        )
 
-    def get_static(self, name: str) -> "StaticInfo | None":
+    def get_static(self, name: str) -> StaticInfo | None:
         """Get a static handler by name."""
         return self._statics.get(name)
 
-    def get_all_statics(self) -> dict[str, "StaticInfo"]:
+    def get_all_statics(self) -> dict[str, StaticInfo]:
         """Get all registered static handlers."""
         return self._statics.copy()
+
+    def get_api_graph(self):
+        """Get the semantic API graph used by code generators and runtimes."""
+        return self._core.get_graph()
 
     def collect_models_from_type(self, type_hint: Any) -> None:
         """
@@ -224,15 +319,35 @@ class CommandRegistry:
         if isinstance(type_hint, type) and issubclass(type_hint, BaseModel):
             if type_hint.__name__ not in self._models:
                 self._models[type_hint.__name__] = type_hint
+                self._core.register_model(type_hint)
                 for field_name, field_info in type_hint.model_fields.items():
                     self.collect_models_from_type(field_info.annotation)
+
+
+def _extract_channel_item(cmd: CommandInfo) -> Any:
+    try:
+        hints = get_type_hints(cmd.func)
+    except Exception:
+        hints = {}
+    channel_hint = hints.get("channel")
+    if not channel_hint:
+        return None
+    args = get_args(channel_hint)
+    if not args:
+        return None
+    return type_ref(args[0])
 
 
 # Global registry instance
 _registry = CommandRegistry.get_instance()
 
 
-def command(func: Callable = None, *, name: str | None = None) -> Callable:
+def command(
+    func: Callable = None,
+    *,
+    name: str | None = None,
+    deps: list[Callable[..., Any]] | None = None,
+) -> Callable:
     """
     Decorator to register a function as a Zynk command.
 
@@ -303,6 +418,7 @@ def command(func: Callable = None, *, name: str | None = None) -> Callable:
             has_channel=has_channel,
             optional_params=optional_params,
         )
+        cmd_info.deps = deps or []
 
         _registry.register(cmd_info)
 
