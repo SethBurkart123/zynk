@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import types
 from enum import Enum
-from typing import Any, Union, get_args, get_origin
+from typing import Any, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -54,6 +54,14 @@ def type_ref(type_hint: Any) -> TypeRef:
     origin = get_origin(type_hint)
     args = get_args(type_hint)
 
+    if origin is Literal:
+        if len(args) == 1:
+            return TypeRef(kind="literal", value=args[0], py_type=type_hint)
+        return TypeRef(
+            kind="union",
+            inner=[TypeRef(kind="literal", value=arg, py_type=type(arg)) for arg in args],
+            py_type=type_hint,
+        )
     if is_union(origin):
         return TypeRef(
             kind="union",

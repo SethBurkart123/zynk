@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from typing import Literal
 
 import pytest
 from pydantic import BaseModel
@@ -52,6 +53,10 @@ class _ServerEvents:
 
 class _ClientEvents:
     chat_message: _ChatMessage
+
+
+class _Tier(BaseModel):
+    sourceClass: Literal["official", "community"] = "community"
 
 
 @pytest.fixture(autouse=True)
@@ -285,3 +290,15 @@ def test_call_options_are_forwarded(temp_dir):
     # The last argument of every callCommand emission is the user's options.
     assert "options" in content
     assert "callCommand(\"echo\", { value: args.value }, Schema.String, options)" in content
+
+
+def test_literal_field_emits_schema_literal(temp_dir):
+    @command
+    async def get_tier() -> _Tier:
+        return _Tier(sourceClass="official")
+
+    client_path, _ = _generate(temp_dir)
+    content = open(client_path).read()
+    assert 'Schema.Literal("official")' in content
+    assert 'Schema.Literal("community")' in content
+    assert 'Schema.Union(Schema.Literal("official"), Schema.Literal("community"))' in content
