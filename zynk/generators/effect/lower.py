@@ -530,13 +530,11 @@ def lower_graph(
         internal_imports.append('  openWebSocket,')
     if needs_promise:
         internal_imports.append('  runPromise,')
-    if channels_src:
+    if opts.resolve("channels") == "promise" and channels_src:
         internal_imports.append('  toAsyncIterable,')
-    internal_imports.append('  disposeZynk,')
     internal_imports.append('  type CallOptions,')
     if uploads_src:
         internal_imports.append('  type UploadOptions,')
-        internal_imports.append('  type UploadProgressEvent,')
     internal_imports.append('  type ZynkClient,')
     internal_imports.append('  type ZynkError,')
     if sockets_src:
