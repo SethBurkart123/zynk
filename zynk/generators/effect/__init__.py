@@ -24,6 +24,7 @@ from zynk.codegen import (
 )
 
 from .lower import lower_graph
+from .options import EffectGeneratorOptions
 from .runtime import INTERNAL_RUNTIME
 
 
@@ -35,7 +36,8 @@ class EffectClientGenerator:
         output_path: Path,
         context: GenerationContext,
     ) -> GenerationResult:
-        module = lower_graph(context.graph, context.registry)
+        options = EffectGeneratorOptions.from_mapping(context.options) if context.options else None
+        module = lower_graph(context.graph, context.registry, options)
         runtime_path = output_path.parent / "_effect_internal.ts"
         return GenerationResult(
             files=[

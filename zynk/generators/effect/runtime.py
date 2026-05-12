@@ -17,6 +17,7 @@ import {
   Duration,
   Effect,
   Layer,
+  ManagedRuntime,
   Schedule,
   Schema,
   Stream,
@@ -227,7 +228,11 @@ export const layerZynkClient = (
       config.fetch ?? globalThis.fetch.bind(globalThis),
   })
 
-export const initZynk = layerZynkClient
+export const initZynk = (config: ZynkClientConfig): Layer.Layer<ZynkClient> => {
+  const layer = layerZynkClient(config)
+  setDefaultLayer(layer)
+  return layer
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -781,4 +786,48 @@ export const openWebSocket = (
       catch: (cause) => new ZynkNetworkError({ url, cause }),
     })
   })
+
+// ---------------------------------------------------------------------------
+// Promise surface helpers
+// ---------------------------------------------------------------------------
+
+let _defaultRuntime: ManagedRuntime.ManagedRuntime<ZynkClient, never> | undefined
+
+export const setDefaultLayer = (layer: Layer.Layer<ZynkClient>): void => {
+  if (_defaultRuntime) {
+    void _defaultRuntime.dispose()
+  }
+  _defaultRuntime = ManagedRuntime.make(layer)
+}
+
+const requireRuntime = (): ManagedRuntime.ManagedRuntime<ZynkClient, never> => {
+  if (!_defaultRuntime) {
+    throw new Error(
+      "Zynk: call initZynk(config) before using promise-style functions.",
+    )
+  }
+  return _defaultRuntime
+}
+
+export const runPromise = <A>(
+  effect: Effect.Effect<A, ZynkError, ZynkClient>,
+): Promise<A> => requireRuntime().runPromise(effect)
+
+export const toAsyncIterable = <A>(
+  stream: Stream.Stream<A, ZynkError, ZynkClient>,
+): AsyncIterable<A> => ({
+  async *[Symbol.asyncIterator]() {
+    const rt = await requireRuntime().runtime()
+    const inner = Stream.toAsyncIterableRuntime(stream, rt)
+    for await (const item of inner) {
+      yield item
+    }
+  },
+})
+
+export const disposeZynk = (): Promise<void> => {
+  const rt = _defaultRuntime
+  _defaultRuntime = undefined
+  return rt ? rt.dispose() : Promise.resolve()
+}
 '''

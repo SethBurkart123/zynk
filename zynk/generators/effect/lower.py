@@ -15,6 +15,7 @@ from typing import Any
 from zynk.core.ir import ApiGraph, Endpoint, Param
 from zynk.core.naming import python_name_to_camel_case
 
+from .options import EffectGeneratorOptions
 from .types import collect_model_refs, render_model_schema, type_expr
 
 
@@ -295,11 +296,141 @@ def _emit_websocket(endpoint: Endpoint, model_names: set[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Promise surface emitters
+# ---------------------------------------------------------------------------
+
+
+def _emit_rpc_promise(endpoint: Endpoint, model_names: set[str]) -> str:
+    fn_name = _camel(endpoint.name)
+    response = type_expr(endpoint.returns, model_names)
+    params_type = _params_object(endpoint.params, model_names)
+    args_payload = _args_payload(endpoint.params)
+    has_params = params_type != "void"
+
+    lines: list[str] = []
+    lines.extend(_doc_block(endpoint.doc))
+    if has_params:
+        lines.append(
+            f"export const {fn_name} = ("
+            f"args: {params_type}, "
+            f"options?: CallOptions"
+            f"): Promise<{response.ts}> =>"
+        )
+    else:
+        lines.append(
+            f"export const {fn_name} = ("
+            f"options?: CallOptions"
+            f"): Promise<{response.ts}> =>"
+        )
+    lines.append(
+        f'  runPromise(callCommand("{endpoint.name}", {args_payload}, '
+        f"{response.schema}, options))"
+    )
+    return "\n".join(lines)
+
+
+def _emit_channel_promise(endpoint: Endpoint, model_names: set[str]) -> str:
+    fn_name = _camel(endpoint.name)
+    item = type_expr(endpoint.channel_item, model_names) if endpoint.channel_item else type_expr(None, model_names)
+    params_type = _params_object(endpoint.params, model_names)
+    args_payload = _args_payload(endpoint.params)
+    has_params = params_type != "void"
+
+    lines: list[str] = []
+    lines.extend(_doc_block(endpoint.doc))
+    if has_params:
+        lines.append(
+            f"export const {fn_name} = ("
+            f"args: {params_type}, "
+            f"options?: CallOptions"
+            f"): AsyncIterable<{item.ts}> =>"
+        )
+    else:
+        lines.append(
+            f"export const {fn_name} = ("
+            f"options?: CallOptions"
+            f"): AsyncIterable<{item.ts}> =>"
+        )
+    lines.append(
+        f'  toAsyncIterable(callChannel("{endpoint.name}", {args_payload}, '
+        f"{item.schema}, options))"
+    )
+    return "\n".join(lines)
+
+
+def _emit_upload_promise(endpoint: Endpoint, model_names: set[str]) -> str:
+    fn_name = _camel(endpoint.name)
+    response = type_expr(endpoint.returns, model_names)
+
+    if endpoint.multi_file:
+        file_field = "files: ReadonlyArray<File>"
+    else:
+        file_field = "file: File"
+
+    required = []
+    optional = []
+    for param in endpoint.params:
+        expr = type_expr(param.type, model_names)
+        ts = expr.ts
+        if not param.required:
+            ts = ts.removesuffix(" | undefined")
+            optional.append(f"{param.ts_name}?: {ts}")
+        else:
+            required.append(f"{param.ts_name}: {ts}")
+    args_fields = [file_field, *required, *optional]
+    params_type = "{ " + "; ".join(args_fields) + " }"
+
+    args_payload = _args_payload(endpoint.params)
+    files_expr = "args.files" if endpoint.multi_file else "[args.file]"
+
+    lines = list(_doc_block(endpoint.doc))
+    lines.append(
+        f"export const {fn_name} = ("
+        f"args: {params_type}, "
+        f"options?: UploadOptions"
+        f"): Promise<{response.ts}> =>"
+    )
+    lines.append(
+        f'  runPromise(callUpload("{endpoint.name}", {files_expr}, {args_payload}, '
+        f"{response.schema}, options))"
+    )
+    return "\n".join(lines)
+
+
+def _emit_static_promise(endpoint: Endpoint, model_names: set[str]) -> str:
+    fn_name = _camel(endpoint.name) + "Url"
+    params_type = _params_object(endpoint.params, model_names)
+    args_payload = _args_payload(endpoint.params)
+    has_params = params_type != "void"
+
+    lines = list(_doc_block(endpoint.doc))
+    if has_params:
+        lines.append(
+            f"export const {fn_name} = ("
+            f"args: {params_type}"
+            f"): Promise<string> =>"
+        )
+    else:
+        lines.append(
+            f"export const {fn_name} = ("
+            f"): Promise<string> =>"
+        )
+    lines.append(f'  runPromise(buildStaticUrl("{endpoint.name}", {args_payload}))')
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Module assembly
 # ---------------------------------------------------------------------------
 
 
-def lower_graph(graph: ApiGraph, registry: Any) -> EffectModule:
+def lower_graph(
+    graph: ApiGraph,
+    registry: Any,
+    options: EffectGeneratorOptions | None = None,
+) -> EffectModule:
+    opts = options or EffectGeneratorOptions()
+
     rpcs = [ep for ep in graph.endpoints.values() if ep.kind == "rpc"]
     channels = [ep for ep in graph.endpoints.values() if ep.kind == "channel"]
     uploads = [ep for ep in graph.endpoints.values() if ep.kind == "upload"]
@@ -307,26 +438,21 @@ def lower_graph(graph: ApiGraph, registry: Any) -> EffectModule:
     sockets = [ep for ep in graph.endpoints.values() if ep.kind == "ws"]
 
     model_names: set[str] = set()
-    rpcs_src = [_emit_rpc(ep, model_names) for ep in sorted(rpcs, key=lambda e: e.name)]
-    channels_src = [
-        _emit_channel(ep, model_names) for ep in sorted(channels, key=lambda e: e.name)
-    ]
-    uploads_src = [
-        _emit_upload(ep, model_names) for ep in sorted(uploads, key=lambda e: e.name)
-    ]
-    statics_src = [
-        _emit_static(ep, model_names) for ep in sorted(statics, key=lambda e: e.name)
-    ]
-    sockets_src = [
-        _emit_websocket(ep, model_names) for ep in sorted(sockets, key=lambda e: e.name)
-    ]
 
-    # Always include every registered model so the generated module is
-    # self-contained for downstream code (eg. typing event payloads).
+    emit_rpc = _emit_rpc_promise if opts.resolve("commands") == "promise" else _emit_rpc
+    emit_channel = _emit_channel_promise if opts.resolve("channels") == "promise" else _emit_channel
+    emit_upload = _emit_upload_promise if opts.resolve("uploads") == "promise" else _emit_upload
+    emit_static = _emit_static_promise if opts.resolve("statics") == "promise" else _emit_static
+
+    rpcs_src = [emit_rpc(ep, model_names) for ep in sorted(rpcs, key=lambda e: e.name)]
+    channels_src = [emit_channel(ep, model_names) for ep in sorted(channels, key=lambda e: e.name)]
+    uploads_src = [emit_upload(ep, model_names) for ep in sorted(uploads, key=lambda e: e.name)]
+    statics_src = [emit_static(ep, model_names) for ep in sorted(statics, key=lambda e: e.name)]
+    sockets_src = [_emit_websocket(ep, model_names) for ep in sorted(sockets, key=lambda e: e.name)]
+
     for name in graph.models:
         model_names.add(name)
 
-    # Resolve model dependencies (a model that references another).
     resolved: dict[str, tuple[str, str]] = {}
     pending = set(model_names)
     while pending:
@@ -346,24 +472,39 @@ def lower_graph(graph: ApiGraph, registry: Any) -> EffectModule:
         model_sections.append(alias)
 
     needs_stream = bool(channels_src or sockets_src)
+    needs_promise = any(
+        opts.resolve(k) == "promise"
+        for k in ("commands", "uploads", "statics", "channels")
+    )
+
+    internal_imports = ['  callCommand,']
+    if channels_src:
+        internal_imports.append('  callChannel,')
+    if uploads_src:
+        internal_imports.append('  callUpload,')
+    if statics_src:
+        internal_imports.append('  buildStaticUrl,')
+    if sockets_src:
+        internal_imports.append('  openWebSocket,')
+    if needs_promise:
+        internal_imports.append('  runPromise,')
+    if opts.resolve("channels") == "promise" and channels_src:
+        internal_imports.append('  toAsyncIterable,')
+    internal_imports.append('  type CallOptions,')
+    if uploads_src:
+        internal_imports.append('  type UploadOptions,')
+    internal_imports.append('  type ZynkClient,')
+    internal_imports.append('  type ZynkError,')
+    if sockets_src:
+        internal_imports.append('  ZynkNetworkError,')
+
     imports = [
         'import {',
         '  Effect,',
         '  Schema,'
         + ("\n  Stream," if needs_stream else ""),
         '} from "effect"',
-        'import {',
-        '  callCommand,'
-        + ("\n  callChannel," if channels_src else "")
-        + ("\n  callUpload," if uploads_src else "")
-        + ("\n  buildStaticUrl," if statics_src else "")
-        + ("\n  openWebSocket," if sockets_src else ""),
-        '  type CallOptions,'
-        + ("\n  type UploadOptions," if uploads_src else ""),
-        '  type ZynkClient,',
-        '  type ZynkError,'
-        + ("\n  ZynkNetworkError," if sockets_src else ""),
-        '} from "./_effect_internal"',
+        'import {\n' + '\n'.join(internal_imports) + '\n} from "./_effect_internal"',
         'export {',
         '  ZynkClient,',
         '  initZynk,',
