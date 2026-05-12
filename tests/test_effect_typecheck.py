@@ -87,6 +87,16 @@ class _MNested(BaseModel):
     z: _ZLeaf
 
 
+class _Tree(BaseModel):
+    """Self-recursive; needs ``Schema.suspend`` wrapping."""
+
+    label: str
+    children: list["_Tree"] = []
+
+
+_Tree.model_rebuild()
+
+
 @pytest.fixture(autouse=True)
 def _reset_registry():
     CommandRegistry.reset()
@@ -219,4 +229,17 @@ def test_schemas_emitted_in_dependency_order(tmp_path):
 
     assert position("_ZLeaf") < position("_AContainer")
     assert position("_AContainer") < position("_MNested")
+    _assert_compiles(tmp_path)
+
+
+def test_self_recursive_schema_typechecks(tmp_path):
+    """A model that references itself must be wrapped in ``Schema.suspend``."""
+
+    @command
+    async def fetch_tree() -> _Tree:
+        return _Tree(label="root")
+
+    _generate(tmp_path)
+    text = (tmp_path / "api.ts").read_text()
+    assert "Schema.suspend" in text
     _assert_compiles(tmp_path)

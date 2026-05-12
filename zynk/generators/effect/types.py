@@ -46,12 +46,20 @@ class TypeExpr:
     schema: str
 
 
-def type_expr(ref: TypeRef | None, model_names: set[str]) -> TypeExpr:
+def type_expr(
+    ref: TypeRef | None,
+    model_names: set[str],
+    self_name: str | None = None,
+) -> TypeExpr:
     """Convert a ``TypeRef`` to a TypeScript + Effect Schema expression pair.
 
     Pydantic model names referenced from this type are accumulated in
     ``model_names`` so the generator can decide which schemas need to be
     declared in the output module.
+
+    ``self_name`` is the name of the model currently being rendered, if any.
+    A reference back to that model is wrapped in ``Schema.suspend`` so the
+    block-scoped ``const`` declaration can refer to itself.
     """
     if ref is None:
         return TypeExpr("void", "Schema.Void")
@@ -72,25 +80,25 @@ def type_expr(ref: TypeRef | None, model_names: set[str]) -> TypeExpr:
             return TypeExpr(f'"{value}"', f'Schema.Literal("{value}")')
         return TypeExpr(repr(value), f"Schema.Literal({_literal_js(value)})")
     if kind == "array":
-        inner = type_expr(ref.inner[0] if ref.inner else None, model_names)
+        inner = type_expr(ref.inner[0] if ref.inner else None, model_names, self_name)
         return _maybe_optional(
             ref,
             TypeExpr(f"ReadonlyArray<{inner.ts}>", f"Schema.Array({inner.schema})"),
         )
     if kind == "record":
-        key = type_expr(ref.inner[0] if len(ref.inner) >= 1 else None, model_names)
-        value = type_expr(ref.inner[1] if len(ref.inner) >= 2 else None, model_names)
+        key = type_expr(ref.inner[0] if len(ref.inner) >= 1 else None, model_names, self_name)
+        value = type_expr(ref.inner[1] if len(ref.inner) >= 2 else None, model_names, self_name)
         ts_key = key.ts if key.ts in ("string", "number") else "string"
         ts = f"Readonly<Record<{ts_key}, {value.ts}>>"
         schema = f"Schema.Record({{ key: {key.schema}, value: {value.schema} }})"
         return _maybe_optional(ref, TypeExpr(ts, schema))
     if kind == "tuple":
-        parts = [type_expr(inner, model_names) for inner in ref.inner]
+        parts = [type_expr(inner, model_names, self_name) for inner in ref.inner]
         ts = "readonly [" + ", ".join(part.ts for part in parts) + "]"
         schema = "Schema.Tuple(" + ", ".join(part.schema for part in parts) + ")"
         return _maybe_optional(ref, TypeExpr(ts, schema))
     if kind == "union":
-        parts = [type_expr(inner, model_names) for inner in ref.inner]
+        parts = [type_expr(inner, model_names, self_name) for inner in ref.inner]
         ts = " | ".join(part.ts for part in parts) or "unknown"
         schema = (
             "Schema.Union(" + ", ".join(part.schema for part in parts) + ")"
@@ -102,7 +110,10 @@ def type_expr(ref: TypeRef | None, model_names: set[str]) -> TypeExpr:
         if ref.name:
             model_names.add(ref.name)
         ts = ref.name or "unknown"
-        schema = ref.name or "Schema.Unknown"
+        if ref.name and ref.name == self_name:
+            schema = f"Schema.suspend((): Schema.Schema<{ref.name}> => {ref.name})"
+        else:
+            schema = ref.name or "Schema.Unknown"
         return _maybe_optional(ref, TypeExpr(ts, schema))
     if kind == "enum":
         return _maybe_optional(ref, _enum_expr(ref))
@@ -166,6 +177,7 @@ def render_model_schema(
     from zynk.core.types import strip_optional, type_ref
 
     field_lines: list[str] = []
+    field_iface_lines: list[str] = []
     field_refs: list[TypeRef] = []
     for field_name, field_info in model.model_fields.items():
         ts_name = python_name_to_camel_case(field_name)
@@ -177,15 +189,37 @@ def render_model_schema(
         ref = type_ref(annotation)
         if is_optional:
             ref.optional = True
-        expr = type_expr(ref, model_names)
+        expr = type_expr(ref, model_names, self_name=model.__name__)
         field_lines.append(f"  {ts_name}: {expr.schema}")
+        field_iface_lines.append(f"  readonly {ts_name}: {expr.ts}")
         field_refs.append(ref)
+    referenced = collect_model_refs(field_refs)
     if deps is not None:
-        referenced = collect_model_refs(field_refs)
-        referenced.discard(model.__name__)
-        deps.update(referenced)
+        external = referenced - {model.__name__}
+        deps.update(external)
 
+    is_self_recursive = model.__name__ in referenced
     schema_body = ",\n".join(field_lines)
+
+    if is_self_recursive:
+        iface_body = "\n".join(field_iface_lines) if field_iface_lines else ""
+        type_alias = (
+            f"export interface {model.__name__} {{\n{iface_body}\n}}"
+            if iface_body
+            else f"export interface {model.__name__} {{}}"
+        )
+        if field_lines:
+            schema_decl = (
+                f"export const {model.__name__}: Schema.Schema<{model.__name__}> = "
+                f"Schema.Struct({{\n{schema_body}\n}})"
+            )
+        else:
+            schema_decl = (
+                f"export const {model.__name__}: Schema.Schema<{model.__name__}> = "
+                f"Schema.Struct({{}})"
+            )
+        return type_alias, schema_decl
+
     schema_decl = (
         f"export const {model.__name__} = Schema.Struct({{\n{schema_body}\n}})"
         if field_lines
