@@ -41,6 +41,41 @@ def _camel(name: str) -> str:
     return python_name_to_camel_case(name)
 
 
+def _topological_sort(deps_by_model: dict[str, set[str]]) -> list[str]:
+    """Order models so each appears after every model it references.
+
+    Effect ``Schema.Struct`` decls reference other schemas as values, so the
+    target schema must already exist by the time it's referenced. Uses
+    Kahn's algorithm with alphabetical tie-breaking for stable output. If a
+    cycle remains (mutual recursion), the leftover nodes are appended in name
+    order; callers may wrap such edges in ``Schema.suspend`` if needed.
+    """
+    in_degree: dict[str, int] = {name: 0 for name in deps_by_model}
+    reverse: dict[str, set[str]] = {name: set() for name in deps_by_model}
+    for name, deps in deps_by_model.items():
+        for dep in deps:
+            if dep not in deps_by_model:
+                continue
+            in_degree[name] += 1
+            reverse[dep].add(name)
+
+    ready = sorted(name for name, deg in in_degree.items() if deg == 0)
+    ordered: list[str] = []
+    while ready:
+        name = ready.pop(0)
+        ordered.append(name)
+        for dependent in sorted(reverse[name]):
+            in_degree[dependent] -= 1
+            if in_degree[dependent] == 0:
+                ready.append(dependent)
+        ready.sort()
+
+    if len(ordered) < len(deps_by_model):
+        remaining = sorted(set(deps_by_model) - set(ordered))
+        ordered.extend(remaining)
+    return ordered
+
+
 def _params_object(params: Iterable[Param], model_names: set[str]) -> str:
     fields: list[str] = []
     required: list[str] = []
@@ -454,6 +489,7 @@ def lower_graph(
         model_names.add(name)
 
     resolved: dict[str, tuple[str, str]] = {}
+    deps_by_model: dict[str, set[str]] = {}
     pending = set(model_names)
     while pending:
         current = pending.pop()
@@ -461,12 +497,18 @@ def lower_graph(
         if not model_def:
             continue
         py_type = model_def.py_type
-        schema, alias = render_model_schema(py_type, model_names)
+        deps: set[str] = set()
+        schema, alias = render_model_schema(py_type, model_names, deps)
         resolved[current] = (schema, alias)
+        deps_by_model[current] = deps
         pending |= model_names - set(resolved.keys())
 
+    ordered = _topological_sort(deps_by_model)
+
     model_sections: list[str] = []
-    for name in sorted(resolved):
+    for name in ordered:
+        if name not in resolved:
+            continue
         schema, alias = resolved[name]
         model_sections.append(schema)
         model_sections.append(alias)

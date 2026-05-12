@@ -151,16 +151,22 @@ def _literal_js(value: Any) -> str:
 def render_model_schema(
     model: type[BaseModel],
     model_names: set[str],
+    deps: set[str] | None = None,
 ) -> tuple[str, str]:
     """Return ``(schema_decl, type_alias)`` strings for a Pydantic model.
 
     The schema represents the server's snake_case payload; the camelCase
     response shape used by the generated client functions is constructed at the
     call site once decoded.
+
+    If ``deps`` is provided, the names of every other model referenced by this
+    schema are added to it (used by the lower-stage to topologically sort
+    schema declarations so that ``Schema.Struct`` references resolve).
     """
     from zynk.core.types import strip_optional, type_ref
 
     field_lines: list[str] = []
+    field_refs: list[TypeRef] = []
     for field_name, field_info in model.model_fields.items():
         ts_name = python_name_to_camel_case(field_name)
         annotation = field_info.annotation
@@ -173,6 +179,11 @@ def render_model_schema(
             ref.optional = True
         expr = type_expr(ref, model_names)
         field_lines.append(f"  {ts_name}: {expr.schema}")
+        field_refs.append(ref)
+    if deps is not None:
+        referenced = collect_model_refs(field_refs)
+        referenced.discard(model.__name__)
+        deps.update(referenced)
 
     schema_body = ",\n".join(field_lines)
     schema_decl = (

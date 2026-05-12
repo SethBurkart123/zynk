@@ -67,6 +67,26 @@ class _UploadResult(BaseModel):
     size: int
 
 
+class _ZLeaf(BaseModel):
+    """Alphabetically last but referenced by ``_AContainer`` below."""
+
+    id: int
+
+
+class _AContainer(BaseModel):
+    """Alphabetically first; depends on ``_ZLeaf`` which sorts after it."""
+
+    leaf: _ZLeaf
+    items: list[_ZLeaf]
+
+
+class _MNested(BaseModel):
+    """Middle alphabetically; depends on both leaf and container."""
+
+    a: _AContainer
+    z: _ZLeaf
+
+
 @pytest.fixture(autouse=True)
 def _reset_registry():
     CommandRegistry.reset()
@@ -175,4 +195,28 @@ def test_promise_channels_typechecks(tmp_path):
         pass
 
     _generate(tmp_path, channels="promise")
+    _assert_compiles(tmp_path)
+
+
+def test_schemas_emitted_in_dependency_order(tmp_path):
+    """``Schema.Struct`` references other schemas as values, so a schema must
+    appear after every schema it depends on. Models are intentionally named so
+    that alphabetical order would break (``_AContainer`` references ``_ZLeaf``).
+    """
+
+    @command
+    async def fetch_nested() -> _MNested:
+        return _MNested(a=_AContainer(leaf=_ZLeaf(id=0), items=[]), z=_ZLeaf(id=0))
+
+    _generate(tmp_path)
+    text = (tmp_path / "api.ts").read_text()
+
+    def position(name: str) -> int:
+        token = f"export const {name} = Schema.Struct"
+        idx = text.find(token)
+        assert idx != -1, f"missing schema declaration for {name}"
+        return idx
+
+    assert position("_ZLeaf") < position("_AContainer")
+    assert position("_AContainer") < position("_MNested")
     _assert_compiles(tmp_path)
