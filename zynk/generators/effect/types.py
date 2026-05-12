@@ -13,6 +13,7 @@ for every API boundary in the generated client.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
@@ -190,7 +191,13 @@ def render_model_schema(
         if is_optional:
             ref.optional = True
         expr = type_expr(ref, model_names, self_name=model.__name__)
-        field_lines.append(f"  {ts_name}: {expr.schema}")
+        schema_expr = expr.schema
+        if ts_name != field_name:
+            schema_expr = (
+                f"Schema.propertySignature({schema_expr})"
+                f".pipe(Schema.fromKey({json.dumps(field_name)}))"
+            )
+        field_lines.append(f"  {ts_name}: {schema_expr}")
         field_iface_lines.append(f"  readonly {ts_name}: {expr.ts}")
         field_refs.append(ref)
     referenced = collect_model_refs(field_refs)
