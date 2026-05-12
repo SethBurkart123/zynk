@@ -2,16 +2,15 @@
 Tests for the upload module.
 """
 
-import io
 import tempfile
 from pathlib import Path
 
 import pytest
-from fastapi import UploadFile as FastAPIUploadFile
+from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
-from zynk import UploadFile, upload, get_registry, generate_typescript
-from zynk.upload import parse_size, matches_mime_type, UploadInfo
+from zynk import Bridge, UploadFile, generate_typescript, get_registry, upload
+from zynk.upload import UploadInfo, matches_mime_type, parse_size
 
 
 class TestParseSize:
@@ -227,6 +226,43 @@ class TestUploadInfoValidation:
 
         with pytest.raises(ValueError, match="not in allowed types"):
             info.validate_file(MockUploadFile())
+
+
+class TestUploadEndpoint:
+    """Tests for the upload HTTP endpoint."""
+
+    def setup_method(self):
+        """Reset registry before each test."""
+        from zynk.registry import CommandRegistry
+
+        CommandRegistry.reset()
+
+    def teardown_method(self):
+        """Reset registry after each test."""
+        from zynk.registry import CommandRegistry
+
+        CommandRegistry.reset()
+
+    def test_accepts_multipart_file(self):
+        """Test that multipart files are forwarded to upload handlers."""
+
+        class Result(BaseModel):
+            filename: str
+            content: str
+
+        @upload
+        async def upload_text(file: UploadFile) -> Result:
+            return Result(filename=file.filename, content=(await file.read()).decode())
+
+        client = TestClient(Bridge(host="127.0.0.1", port=8000).app)
+        response = client.post(
+            "/upload/upload_text",
+            data={"_args": "{}"},
+            files={"files": ("note.txt", b"hello", "text/plain")},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["result"] == {"filename": "note.txt", "content": "hello"}
 
 
 class TestTypeScriptGeneration:

@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any, Union, get_args, get_origin
 
 from fastapi import FastAPI, Request
-from fastapi import UploadFile as FastAPIUploadFile
 from fastapi import WebSocket as FastAPIWebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -26,6 +25,7 @@ from pydantic import ValidationError as PydanticValidationError
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
+from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from .channel import Channel
 from .errors import (
@@ -364,9 +364,13 @@ class Bridge:
             except Exception as e:
                 raise ValidationError(f"Invalid _args JSON: {e}")
 
-            # Convert FastAPI UploadFiles to our UploadFile wrapper
+            # Convert multipart UploadFiles to our UploadFile wrapper
             upload_files: list[UploadFile] = []
-            files = [file for file in form.getlist("files") if isinstance(file, FastAPIUploadFile)]
+            files = [
+                file
+                for file in form.getlist("files")
+                if isinstance(file, StarletteUploadFile)
+            ]
             for f in files:
                 # Read content to get size
                 content = await f.read()
