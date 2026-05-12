@@ -530,11 +530,13 @@ def lower_graph(
         internal_imports.append('  openWebSocket,')
     if needs_promise:
         internal_imports.append('  runPromise,')
-    if opts.resolve("channels") == "promise" and channels_src:
+    if channels_src:
         internal_imports.append('  toAsyncIterable,')
+    internal_imports.append('  disposeZynk,')
     internal_imports.append('  type CallOptions,')
     if uploads_src:
         internal_imports.append('  type UploadOptions,')
+        internal_imports.append('  type UploadProgressEvent,')
     internal_imports.append('  type ZynkClient,')
     internal_imports.append('  type ZynkError,')
     if sockets_src:
@@ -551,8 +553,10 @@ def lower_graph(
         '  ZynkClient,',
         '  initZynk,',
         '  layerZynkClient,',
+        '  disposeZynk,',
         '  type CallOptions,'
-        + ("\n  type UploadOptions," if uploads_src else ""),
+        + ("\n  type UploadOptions," if uploads_src else "")
+        + ("\n  type UploadProgressEvent," if uploads_src else ""),
         '  type RetryOptions,',
         '  type BackoffStrategy,',
         '  type ZynkClientConfig,',
@@ -563,7 +567,9 @@ def lower_graph(
         '  ZynkDecodeError,',
         '  ZynkAbortError,',
         '  ZynkStreamError,',
-        '  ZynkUploadError,',
+        '  ZynkUploadError,'
+        + ("\n  runPromise," if needs_promise else "")
+        + ("\n  toAsyncIterable," if channels_src else ""),
         '} from "./_effect_internal"',
     ]
 
