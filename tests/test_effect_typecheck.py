@@ -91,7 +91,7 @@ class _Tree(BaseModel):
     """Self-recursive; needs ``Schema.suspend`` wrapping."""
 
     label: str
-    children: list["_Tree"] = []
+    children: list["_Tree"] | None = None
 
 
 _Tree.model_rebuild()

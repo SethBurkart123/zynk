@@ -112,7 +112,7 @@ def type_expr(
             model_names.add(ref.name)
         ts = ref.name or "unknown"
         if ref.name and ref.name == self_name:
-            schema = f"Schema.suspend((): Schema.Schema<{ref.name}> => {ref.name})"
+            schema = f"Schema.suspend(() => {ref.name})"
         else:
             schema = ref.name or "Schema.Unknown"
         return _maybe_optional(ref, TypeExpr(ts, schema))
@@ -123,12 +123,17 @@ def type_expr(
 
 
 def _maybe_optional(ref: TypeRef, expr: TypeExpr) -> TypeExpr:
-    if not ref.optional:
-        return expr
-    return TypeExpr(
-        f"{expr.ts} | undefined",
-        f"Schema.UndefinedOr({expr.schema})",
-    )
+    if ref.optional:
+        return TypeExpr(
+            f"{expr.ts} | undefined",
+            f"Schema.UndefinedOr({expr.schema})",
+        )
+    if ref.nullable:
+        return TypeExpr(
+            f"{expr.ts} | null",
+            f"Schema.NullOr({expr.schema})",
+        )
+    return expr
 
 
 def _enum_expr(ref: TypeRef) -> TypeExpr:
@@ -184,21 +189,25 @@ def render_model_schema(
         ts_name = python_name_to_camel_case(field_name)
         annotation = field_info.annotation
         _, optional = strip_optional(annotation)
-        is_optional = optional or (
-            not field_info.is_required() and field_info.default is not None
-        )
         ref = type_ref(annotation)
-        if is_optional:
+        if optional or not field_info.is_required():
             ref.optional = True
+        if optional or (not field_info.is_required() and field_info.default is None):
+            ref.nullable = True
         expr = type_expr(ref, model_names, self_name=model.__name__)
         schema_expr = expr.schema
-        if ts_name != field_name:
+        if ref.optional and ref.nullable:
+            schema_expr = f"Schema.optionalWith({schema_expr}, {{ nullable: true }})"
+            if ts_name != field_name:
+                schema_expr = f"{schema_expr}.pipe(Schema.fromKey({json.dumps(field_name)}))"
+        elif ts_name != field_name:
             schema_expr = (
                 f"Schema.propertySignature({schema_expr})"
                 f".pipe(Schema.fromKey({json.dumps(field_name)}))"
             )
         field_lines.append(f"  {ts_name}: {schema_expr}")
-        field_iface_lines.append(f"  readonly {ts_name}: {expr.ts}")
+        optional_marker = "?" if ref.optional and ref.nullable else ""
+        field_iface_lines.append(f"  readonly {ts_name}{optional_marker}: {expr.ts}")
         field_refs.append(ref)
     referenced = collect_model_refs(field_refs)
     if deps is not None:
@@ -217,12 +226,12 @@ def render_model_schema(
         )
         if field_lines:
             schema_decl = (
-                f"export const {model.__name__}: Schema.Schema<{model.__name__}> = "
+                f"export const {model.__name__}: Schema.Schema<{model.__name__}, any> = "
                 f"Schema.Struct({{\n{schema_body}\n}})"
             )
         else:
             schema_decl = (
-                f"export const {model.__name__}: Schema.Schema<{model.__name__}> = "
+                f"export const {model.__name__}: Schema.Schema<{model.__name__}, any> = "
                 f"Schema.Struct({{}})"
             )
         return type_alias, schema_decl

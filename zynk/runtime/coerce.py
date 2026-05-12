@@ -8,6 +8,15 @@ from typing import Any, Union, get_args, get_origin
 from pydantic import BaseModel
 
 
+def _camel_to_snake(name: str) -> str:
+    out: list[str] = []
+    for index, char in enumerate(name):
+        if char.isupper() and index > 0:
+            out.append("_")
+        out.append(char.lower())
+    return "".join(out)
+
+
 def instantiate_model(data: Any, type_hint: Any) -> Any:
     if data is None:
         return None
@@ -27,9 +36,18 @@ def instantiate_model(data: Any, type_hint: Any) -> Any:
     if isinstance(data, dict):
         if type_hint and isinstance(type_hint, type) and issubclass(type_hint, BaseModel):
             converted = {}
+            fields_by_wire_name = {
+                _camel_to_snake(field_name): (field_name, field_info)
+                for field_name, field_info in type_hint.model_fields.items()
+            }
             for key, value in data.items():
-                field_info = type_hint.model_fields.get(key)
-                converted[key] = instantiate_model(value, field_info.annotation) if field_info else value
+                field = type_hint.model_fields.get(key)
+                field_name = key
+                if field is None:
+                    wire_field = fields_by_wire_name.get(key)
+                    if wire_field is not None:
+                        field_name, field = wire_field
+                converted[field_name] = instantiate_model(value, field.annotation) if field else value
             return type_hint(**converted)
 
     return data

@@ -12,7 +12,7 @@ import tempfile
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 
 from zynk.bridge import Bridge
 from zynk.generator import generate_typescript
@@ -60,6 +60,13 @@ class DeeplyNestedModel(BaseModel):
     additional_data: dict[str, str] | None = None
 
 
+CamelCaseModel = create_model(
+    "CamelCaseModel",
+    chatId=(str, ...),
+    beforeMessageId=(str | None, None),
+)
+
+
 @pytest.fixture(autouse=True)
 def reset_registry():
     """Reset the registry before each test."""
@@ -102,6 +109,34 @@ class TestCamelCaseModelParameters:
         assert "saveProvider" in content
         # Inline mapping for nested model fields
         assert "api_key: args.settings.apiKey" in content
+
+    def test_command_execution_accepts_snake_case_for_camel_case_model_fields(self, temp_dir):
+        received_body = None
+
+        @command
+        async def get_chat_messages_page(body: CamelCaseModel) -> str:
+            nonlocal received_body
+            received_body = body
+            return body.chatId
+
+        bridge = Bridge(host="127.0.0.1", port=8000)
+        client = TestClient(bridge.app)
+
+        response = client.post(
+            "/command/get_chat_messages_page",
+            json={
+                "body": {
+                    "chat_id": "chat-1",
+                    "before_message_id": "msg-1",
+                }
+            },
+        )
+
+        assert response.status_code == 200, f"Failed: {response.json()}"
+        assert response.json()["result"] == "chat-1"
+        assert received_body is not None
+        assert received_body.chatId == "chat-1"
+        assert received_body.beforeMessageId == "msg-1"
 
     def test_command_execution_with_camel_case_input(self, temp_dir):
         """Test that commands execute correctly when receiving snake_case data (after TS conversion)."""

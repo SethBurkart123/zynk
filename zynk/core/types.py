@@ -48,6 +48,7 @@ def type_ref(type_hint: Any) -> TypeRef:
     if optional:
         ref = type_ref(actual)
         ref.optional = True
+        ref.nullable = True
         ref.py_type = type_hint
         return ref
 
@@ -91,6 +92,14 @@ def type_ref(type_hint: Any) -> TypeRef:
     return TypeRef(kind="any", py_type=type_hint)
 
 
+def _field_type_ref(annotation: Any, field_info: Any) -> TypeRef:
+    ref = type_ref(annotation)
+    if not field_info.is_required() and field_info.default is None:
+        ref.optional = True
+        ref.nullable = True
+    return ref
+
+
 def model_def(model: type[BaseModel]) -> ModelDef:
     fields: list[Field] = []
     for field_name, field_info in model.model_fields.items():
@@ -101,7 +110,7 @@ def model_def(model: type[BaseModel]) -> ModelDef:
             Field(
                 py_name=field_name,
                 ts_name=python_name_to_camel_case(field_name),
-                type=type_ref(annotation),
+                type=_field_type_ref(annotation, field_info),
                 required=required,
                 doc=field_info.description,
                 default=None if field_info.is_required() else field_info.default,

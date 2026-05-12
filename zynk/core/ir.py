@@ -30,6 +30,7 @@ class TypeRef:
     inner: list[TypeRef] = field(default_factory=list)
     py_type: Any = None
     optional: bool = False
+    nullable: bool = False
     value: Any = None
 
 

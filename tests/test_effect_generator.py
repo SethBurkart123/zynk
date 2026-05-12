@@ -7,7 +7,7 @@ import tempfile
 from typing import Literal
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 
 # Importing the package registers the generator with Zynk's plugin registry.
 import zynk.generators.effect  # noqa: F401
@@ -57,6 +57,18 @@ class _ClientEvents:
 
 class _Tier(BaseModel):
     sourceClass: Literal["official", "community"] = "community"
+
+
+class _OptionalDefaults(BaseModel):
+    omitted: str = "default"
+    nullable: str | None = None
+
+
+_CamelBody = create_model(
+    "_CamelBody",
+    chatId=(str, ...),
+    beforeMessageId=(str | None, None),
+)
 
 
 @pytest.fixture(autouse=True)
@@ -150,7 +162,7 @@ def test_optional_param_becomes_question_mark(temp_dir):
     assert "ReadonlyArray<_User>" in content
 
 
-def test_optional_return_yields_undefined_or(temp_dir):
+def test_optional_return_yields_nullish_or(temp_dir):
     @command
     async def find_person(name: str) -> _Person | None:
         return None
@@ -169,6 +181,28 @@ def test_no_args_command(temp_dir):
     client_path, _ = _generate(temp_dir)
     content = open(client_path).read()
     assert "export const getVersion = (options?: CallOptions)" in content
+
+
+def test_none_defaults_are_nullable_but_other_defaults_are_undefined(temp_dir):
+    @command
+    async def get_defaults() -> _OptionalDefaults:
+        return _OptionalDefaults()
+
+    client_path, _ = _generate(temp_dir)
+    content = open(client_path).read()
+    assert "omitted: Schema.UndefinedOr(Schema.String)" in content
+    assert "nullable: Schema.optionalWith(Schema.UndefinedOr(Schema.String), { nullable: true })" in content
+
+
+def test_camel_case_python_fields_accept_snake_case_wire_payload(temp_dir):
+    @command
+    async def get_chat_messages_page(body: _CamelBody) -> _CamelBody:
+        return body
+
+    client_path, _ = _generate(temp_dir)
+    content = open(client_path).read()
+    assert 'callCommand("get_chat_messages_page", { body: args.body }, _CamelBody, options)' in content
+    assert "body: _CamelBody" in content
 
 
 def test_channel_returns_stream(temp_dir):
@@ -275,8 +309,7 @@ def test_nested_models_are_emitted(temp_dir):
 
     assert "export const _Address = Schema.Struct" in content
     assert "export const _Person = Schema.Struct" in content
-    # Nested optional model resolves to UndefinedOr(_Address)
-    assert "Schema.UndefinedOr(_Address)" in content
+    assert "Schema.optionalWith(Schema.UndefinedOr(_Address), { nullable: true })" in content
     assert "Schema.Array(Schema.String)" in content
 
 
