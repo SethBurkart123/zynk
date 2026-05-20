@@ -8,5 +8,5 @@
     "lib": ["ES2022", "DOM"],
     "types": ["bun"]
   },
-  "include": ["index.ts", "index.test.ts", "../frontend/src/generated/**/*.ts"]
+  "include": ["index.ts", "effect.ts", "index.test.ts", "../frontend/src/generated/**/*.ts", "../frontend/src/generated-effect/**/*.ts"]
 }

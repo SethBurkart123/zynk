@@ -4,10 +4,14 @@
   "type": "module",
   "scripts": {
     "test": "bun run index.ts",
+    "test:effect": "bun run effect.ts",
     "typecheck": "bun x tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "^1.3.3",
     "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "effect": "^3.21.2"
   }
 }

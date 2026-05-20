@@ -354,6 +354,8 @@ fn render_model_schema(model: &ModelDef, graph: &ApiGraph) -> String {
         .collect::<BTreeSet<_>>();
     let is_self_recursive = referenced.contains(&name);
 
+    let type_alias = format!("export type {name} = Schema.Schema.Type<typeof {name}>");
+
     if is_self_recursive {
         let iface = render_recursive_interface(&name, &rendered_fields);
         let schema = if fields.is_empty() {
@@ -365,9 +367,9 @@ fn render_model_schema(model: &ModelDef, graph: &ApiGraph) -> String {
         };
         format!("{iface}\n\n{schema}")
     } else if fields.is_empty() {
-        format!("export const {name} = Schema.Struct({{}})")
+        format!("export const {name} = Schema.Struct({{}})\n\n{type_alias}")
     } else {
-        format!("export const {name} = Schema.Struct({{\n{fields}\n}})")
+        format!("export const {name} = Schema.Struct({{\n{fields}\n}})\n\n{type_alias}")
     }
 }
 
@@ -379,7 +381,7 @@ struct RenderedField {
 
 fn render_recursive_interface(name: &str, fields: &[RenderedField]) -> String {
     if fields.is_empty() {
-        return format!("export interface {name} {{}}");
+        return format!("export type {name} = {{}}");
     }
 
     format!(
