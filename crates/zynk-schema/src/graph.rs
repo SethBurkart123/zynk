@@ -122,7 +122,7 @@ impl ApiGraph {
 mod tests {
     use crate::{Endpoint, EndpointKind, Param, TypeRef};
 
-    use super::ApiGraph;
+    use super::{ApiGraph, EnumDef, Field, ModelDef};
 
     #[test]
     fn serializes_endpoint_graph_without_io() {
@@ -190,5 +190,242 @@ mod tests {
         let object = serialized.as_object().expect("field serializes as object");
         assert!(!object.contains_key("optional"));
         assert!(!object.contains_key("nullable"));
+    }
+
+    #[test]
+    fn api_graph_round_trips_all_endpoint_and_type_features() {
+        let mut graph = ApiGraph::new();
+
+        let mut priority = EnumDef::new("Priority");
+        priority.doc = Some("Explicit enum values for code generators.".to_string());
+        priority.values = vec![
+            serde_json::json!("low"),
+            serde_json::json!("medium"),
+            serde_json::json!("high"),
+            serde_json::json!(3),
+        ];
+        graph.insert_enum(priority);
+
+        let mut metadata = ModelDef::new("Metadata");
+        metadata.doc = Some("Nested metadata model.".to_string());
+        metadata.fields.push(Field::new(
+            "created_at",
+            "createdAt",
+            TypeRef::primitive("string"),
+            true,
+        ));
+        metadata.fields.push(Field::new(
+            "tags",
+            "tags",
+            TypeRef::array(TypeRef::primitive("string")),
+            true,
+        ));
+        metadata.fields.push(Field::new(
+            "attributes",
+            "attributes",
+            TypeRef::record(TypeRef::primitive("string"), TypeRef::any()),
+            false,
+        ));
+        graph.insert_model(metadata);
+
+        let mut user = ModelDef::new("User");
+        user.doc = Some("User model with nested, enum, and literal fields.".to_string());
+        user.fields
+            .push(Field::new("id", "id", TypeRef::primitive("number"), true));
+        user.fields.push(Field::new(
+            "metadata",
+            "metadata",
+            TypeRef::model("Metadata"),
+            true,
+        ));
+        user.fields.push(Field::new(
+            "priority",
+            "priority",
+            TypeRef::enum_ref("Priority"),
+            true,
+        ));
+        user.fields.push(Field::new(
+            "role",
+            "role",
+            TypeRef::literal(serde_json::json!("admin")),
+            true,
+        ));
+        user.fields.push(Field::new(
+            "retries",
+            "retries",
+            TypeRef::literal(serde_json::json!(3)),
+            true,
+        ));
+        user.fields.push(Field::new(
+            "enabled",
+            "enabled",
+            TypeRef::literal(serde_json::json!(true)),
+            true,
+        ));
+        user.fields.push(Field::new(
+            "deleted_marker",
+            "deletedMarker",
+            TypeRef::literal(serde_json::Value::Null),
+            false,
+        ));
+
+        let mut optional_but_not_nullable = TypeRef::primitive("string");
+        optional_but_not_nullable.optional = true;
+        user.fields.push(Field::new(
+            "display_name",
+            "displayName",
+            optional_but_not_nullable,
+            false,
+        ));
+
+        let mut nullable_but_required = TypeRef::model("Metadata");
+        nullable_but_required.nullable = true;
+        user.fields.push(Field::new(
+            "secondary_metadata",
+            "secondaryMetadata",
+            nullable_but_required,
+            true,
+        ));
+
+        let mut optional_and_nullable = TypeRef::union(vec![
+            TypeRef::literal(serde_json::json!("email")),
+            TypeRef::literal(serde_json::json!("sms")),
+        ]);
+        optional_and_nullable.optional = true;
+        optional_and_nullable.nullable = true;
+        let mut preferred_contact = Field::new(
+            "preferred_contact",
+            "preferredContact",
+            optional_and_nullable,
+            false,
+        );
+        preferred_contact.doc = Some("Optional nullable union of literal values.".to_string());
+        preferred_contact.default = Some(serde_json::json!("email"));
+        user.fields.push(preferred_contact);
+
+        graph.insert_model(user);
+
+        let mut rpc = Endpoint::new("get_user", EndpointKind::Rpc, TypeRef::model("User"));
+        rpc.module = Some("users".to_string());
+        rpc.doc = Some("Fetches a user.".to_string());
+        rpc.params.push(Param::new(
+            "user_id",
+            "userId",
+            TypeRef::primitive("number"),
+            true,
+        ));
+        let mut include_deleted = Param::new(
+            "include_deleted",
+            "includeDeleted",
+            TypeRef::primitive("boolean"),
+            false,
+        );
+        include_deleted.default = Some(serde_json::json!(false));
+        rpc.params.push(include_deleted);
+        graph.insert_endpoint(rpc);
+
+        let mut channel = Endpoint::new("watch_users", EndpointKind::Channel, TypeRef::void());
+        channel.channel_item = Some(TypeRef::model("User"));
+        channel.params.push(Param::new(
+            "priority",
+            "priority",
+            TypeRef::enum_ref("Priority"),
+            false,
+        ));
+        graph.insert_endpoint(channel);
+
+        let mut upload = Endpoint::new(
+            "upload_avatar",
+            EndpointKind::Upload,
+            TypeRef::model("User"),
+        );
+        upload.file_param = Some("avatar".to_string());
+        upload.multi_file = false;
+        upload.max_size = Some(10_485_760);
+        upload.allowed_types = vec!["image/png".to_string(), "image/jpeg".to_string()];
+        upload.params.push(Param::new(
+            "user_id",
+            "userId",
+            TypeRef::primitive("number"),
+            true,
+        ));
+        graph.insert_endpoint(upload);
+
+        let mut static_endpoint = Endpoint::new(
+            "download_report",
+            EndpointKind::Static,
+            TypeRef::primitive("string"),
+        );
+        static_endpoint.params.push(Param::new(
+            "report_id",
+            "reportId",
+            TypeRef::primitive("string"),
+            true,
+        ));
+        graph.insert_endpoint(static_endpoint);
+
+        let mut websocket = Endpoint::new("user_socket", EndpointKind::Ws, TypeRef::void());
+        websocket.server_events.push(Param::new(
+            "user_updated",
+            "userUpdated",
+            TypeRef::model("User"),
+            true,
+        ));
+        websocket.server_events.push(Param::new(
+            "heartbeat",
+            "heartbeat",
+            TypeRef::literal(serde_json::json!("ok")),
+            true,
+        ));
+        websocket.client_events.push(Param::new(
+            "subscribe",
+            "subscribe",
+            TypeRef::record(TypeRef::primitive("string"), TypeRef::any()),
+            true,
+        ));
+        websocket.client_events.push(Param::new(
+            "set_priority",
+            "setPriority",
+            TypeRef::enum_ref("Priority"),
+            false,
+        ));
+        graph.insert_endpoint(websocket);
+
+        let json = serde_json::to_string_pretty(&graph).expect("serialize graph");
+        let round_tripped: ApiGraph = serde_json::from_str(&json).expect("deserialize graph");
+
+        assert_eq!(round_tripped, graph);
+        assert_eq!(graph.endpoints.len(), 5);
+        assert!(graph
+            .endpoints
+            .values()
+            .any(|endpoint| endpoint.kind == EndpointKind::Rpc));
+        assert!(graph
+            .endpoints
+            .values()
+            .any(|endpoint| endpoint.kind == EndpointKind::Channel));
+        assert!(graph
+            .endpoints
+            .values()
+            .any(|endpoint| endpoint.kind == EndpointKind::Upload));
+        assert!(graph
+            .endpoints
+            .values()
+            .any(|endpoint| endpoint.kind == EndpointKind::Static));
+        assert!(graph
+            .endpoints
+            .values()
+            .any(|endpoint| endpoint.kind == EndpointKind::Ws));
+
+        let user = graph.models.get("User").expect("User model exists");
+        assert!(user.fields.iter().any(|field| {
+            field.wire_name == "displayName" && field.optional && !field.nullable
+        }));
+        assert!(user.fields.iter().any(|field| {
+            field.wire_name == "secondaryMetadata" && !field.optional && field.nullable
+        }));
+        assert!(user.fields.iter().any(|field| {
+            field.wire_name == "preferredContact" && field.optional && field.nullable
+        }));
     }
 }

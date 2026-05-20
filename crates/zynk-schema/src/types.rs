@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 /// Language-neutral type categories used by Zynk generators.
@@ -30,8 +30,19 @@ pub struct TypeRef {
     pub optional: bool,
     #[serde(default)]
     pub nullable: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_literal_value"
+    )]
     pub value: Option<Value>,
+}
+
+fn deserialize_optional_literal_value<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Some(Value::deserialize(deserializer)?))
 }
 
 impl TypeRef {
