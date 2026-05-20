@@ -1,0 +1,22 @@
+[package]
+name = "zynk-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Command-line interface for generating Zynk TypeScript clients"
+
+[[bin]]
+name = "zynk"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+notify = "8"
+serde_json.workspace = true
+zynk-codegen = { path = "../zynk-codegen" }
+zynk-gen-effect = { path = "../zynk-gen-effect" }
+zynk-gen-ts = { path = "../zynk-gen-ts" }
+zynk-schema = { path = "../zynk-schema" }
