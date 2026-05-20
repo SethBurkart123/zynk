@@ -15,6 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, Bytes};
 use axum::extract::multipart::MultipartRejection;
+use axum::extract::ws::{CloseFrame, Message, WebSocket as AxumWebSocket, WebSocketUpgrade};
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -25,9 +26,9 @@ use serde_json::{json, Map, Value};
 use tokio::sync::mpsc;
 use zynk_runtime::{
     inventory, EndpointKind, EndpointMeta, Handler, HandlerKey, JsonErrorEnvelope,
-    JsonResultEnvelope, ParamMeta, SseFrame, ZynkError, COMMAND_NOT_FOUND, EXECUTION_ERROR,
-    INTERNAL_ERROR, STATIC_HANDLER_NOT_FOUND, UPLOAD_HANDLER_NOT_FOUND, UPLOAD_VALIDATION_ERROR,
-    VALIDATION_ERROR,
+    JsonResultEnvelope, ParamMeta, SseFrame, WsMessage, ZynkError, COMMAND_NOT_FOUND,
+    EXECUTION_ERROR, INTERNAL_ERROR, STATIC_HANDLER_NOT_FOUND, UPLOAD_HANDLER_NOT_FOUND,
+    UPLOAD_VALIDATION_ERROR, VALIDATION_ERROR, WEBSOCKET_ERROR,
 };
 
 /// Axum integration point for Zynk endpoints.
@@ -37,11 +38,13 @@ pub struct ZynkBridge {
 }
 
 struct BridgeState {
+    title: String,
     endpoints: BTreeMap<String, &'static EndpointMeta>,
     handlers: HashMap<HandlerKey, Arc<dyn Handler>>,
     channel_handlers: HashMap<HandlerKey, Arc<dyn ChannelHandler>>,
     upload_handlers: HashMap<HandlerKey, Arc<dyn UploadHandler>>,
     static_handlers: HashMap<HandlerKey, Arc<dyn StaticHandler>>,
+    ws_handlers: HashMap<HandlerKey, Arc<dyn WsHandler>>,
     debug: bool,
     keepalive_interval: Duration,
 }
@@ -49,6 +52,7 @@ struct BridgeState {
 type BoxChannelFuture = Pin<Box<dyn Future<Output = Result<(), ZynkError>> + Send>>;
 type BoxUploadFuture = Pin<Box<dyn Future<Output = Result<Value, ZynkError>> + Send>>;
 type BoxStaticFuture = Pin<Box<dyn Future<Output = Result<StaticFile, ZynkError>> + Send>>;
+type BoxWsFuture = Pin<Box<dyn Future<Output = Result<(), ZynkError>> + Send>>;
 
 /// Type-erased async handler contract for channel endpoints.
 pub trait ChannelHandler: Send + Sync + 'static {
@@ -189,6 +193,22 @@ where
     }
 }
 
+/// Type-erased async handler contract for WebSocket message events.
+pub trait WsHandler: Send + Sync + 'static {
+    /// Invoke a websocket event handler with the parsed JSON frame and sender.
+    fn call(&self, payload: Value, socket: WebSocket) -> BoxWsFuture;
+}
+
+impl<F, Fut> WsHandler for F
+where
+    F: Fn(Value, WebSocket) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<(), ZynkError>> + Send + 'static,
+{
+    fn call(&self, payload: Value, socket: WebSocket) -> BoxWsFuture {
+        Box::pin(self(payload, socket))
+    }
+}
+
 #[derive(Debug, Clone)]
 enum ChannelEvent {
     Data(Value),
@@ -242,6 +262,25 @@ impl Channel {
     }
 }
 
+/// Server-side sender passed to WebSocket event handlers.
+#[derive(Clone, Debug)]
+pub struct WebSocket {
+    sender: mpsc::UnboundedSender<WsMessage>,
+}
+
+impl WebSocket {
+    fn new(sender: mpsc::UnboundedSender<WsMessage>) -> Self {
+        Self { sender }
+    }
+
+    /// Send a JSON value as a WebSocket `{event, data}` text frame.
+    pub async fn send(&self, event: impl Into<String>, data: Value) -> Result<(), ZynkError> {
+        self.sender
+            .send(WsMessage::new(event, data))
+            .map_err(|_| ZynkError::new(WEBSOCKET_ERROR, "Cannot send on closed WebSocket"))
+    }
+}
+
 impl ZynkBridge {
     /// Create a bridge from all link-time registered endpoint metadata.
     pub fn new() -> Self {
@@ -251,6 +290,12 @@ impl ZynkBridge {
     /// Create a bridge with debug error output enabled or disabled.
     pub fn with_debug(debug: bool) -> Self {
         Self::from_parts(collect_inventory_endpoints(), HashMap::new(), debug)
+    }
+
+    /// Return a copy of this bridge with the configured introspection title.
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        Arc::make_mut(&mut self.state).title = title.into();
+        self
     }
 
     /// Return a copy of this bridge with debug error output enabled or disabled.
@@ -322,6 +367,17 @@ impl ZynkBridge {
         self
     }
 
+    /// Register an async WebSocket event handler for an endpoint metadata `HandlerKey`.
+    pub fn register_ws<H>(mut self, key: HandlerKey, handler: H) -> Self
+    where
+        H: WsHandler,
+    {
+        Arc::make_mut(&mut self.state)
+            .ws_handlers
+            .insert(key, Arc::new(handler));
+        self
+    }
+
     /// Set the idle interval between `keepalive` SSE frames.
     pub fn keepalive_interval(mut self, interval: Duration) -> Self {
         Arc::make_mut(&mut self.state).keepalive_interval = interval;
@@ -331,6 +387,11 @@ impl ZynkBridge {
     /// Register Zynk routes on an existing Axum router.
     pub fn configure(self, router: Router) -> Router {
         router
+            .route("/", get(root_route).with_state(self.state.clone()))
+            .route(
+                "/commands",
+                get(commands_route).with_state(self.state.clone()),
+            )
             .route(
                 "/command/{name}",
                 post(command_route).with_state(self.state.clone()),
@@ -347,8 +408,9 @@ impl ZynkBridge {
                 "/static/{name}",
                 get(static_get_route)
                     .head(static_head_route)
-                    .with_state(self.state),
+                    .with_state(self.state.clone()),
             )
+            .route("/ws/{name}", get(ws_route).with_state(self.state))
     }
 
     /// Dump the canonical `zynk-schema` API graph JSON for registered endpoints.
@@ -376,11 +438,13 @@ impl ZynkBridge {
     ) -> Self {
         Self {
             state: Arc::new(BridgeState {
+                title: "Zynk API".to_string(),
                 endpoints,
                 handlers,
                 channel_handlers: HashMap::new(),
                 upload_handlers: HashMap::new(),
                 static_handlers: HashMap::new(),
+                ws_handlers: HashMap::new(),
                 debug,
                 keepalive_interval: Duration::from_secs(30),
             }),
@@ -397,11 +461,13 @@ impl Default for ZynkBridge {
 impl Clone for BridgeState {
     fn clone(&self) -> Self {
         Self {
+            title: self.title.clone(),
             endpoints: self.endpoints.clone(),
             handlers: self.handlers.clone(),
             channel_handlers: self.channel_handlers.clone(),
             upload_handlers: self.upload_handlers.clone(),
             static_handlers: self.static_handlers.clone(),
+            ws_handlers: self.ws_handlers.clone(),
             debug: self.debug,
             keepalive_interval: self.keepalive_interval,
         }
@@ -413,6 +479,44 @@ fn collect_inventory_endpoints() -> BTreeMap<String, &'static EndpointMeta> {
         .into_iter()
         .map(|endpoint| (endpoint.name.to_string(), endpoint))
         .collect()
+}
+
+async fn root_route(State(state): State<Arc<BridgeState>>) -> Response {
+    let commands: Vec<_> = state
+        .endpoints
+        .values()
+        .filter(|endpoint| matches!(endpoint.kind, EndpointKind::Rpc | EndpointKind::Channel))
+        .map(|endpoint| endpoint.name)
+        .collect();
+
+    Json(json!({
+        "status": "ok",
+        "bridge": state.title,
+        "commands": commands,
+    }))
+    .into_response()
+}
+
+async fn commands_route(State(state): State<Arc<BridgeState>>) -> Response {
+    let commands: Vec<_> = state
+        .endpoints
+        .values()
+        .filter(|endpoint| matches!(endpoint.kind, EndpointKind::Rpc | EndpointKind::Channel))
+        .map(|endpoint| {
+            json!({
+                "name": endpoint.name,
+                "module": endpoint.module.unwrap_or_default(),
+                "has_channel": endpoint.kind == EndpointKind::Channel,
+                "params": endpoint
+                    .params
+                    .iter()
+                    .map(|param| param.source_name)
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+
+    Json(json!({ "commands": commands })).into_response()
 }
 
 async fn channel_route(
@@ -961,6 +1065,129 @@ static NEXT_CHANNEL_ID: AtomicU64 = AtomicU64::new(1);
 
 fn next_channel_id() -> String {
     format!("channel-{}", NEXT_CHANNEL_ID.fetch_add(1, Ordering::SeqCst))
+}
+
+async fn ws_route(
+    State(state): State<Arc<BridgeState>>,
+    Path(name): Path<String>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    ws.on_upgrade(move |socket| handle_ws_socket(state, name, socket))
+}
+
+async fn handle_ws_socket(state: Arc<BridgeState>, name: String, mut socket: AxumWebSocket) {
+    let Some(endpoint) = state.endpoints.get(&name).copied() else {
+        close_ws(&mut socket, 4004, format!("Handler '{name}' not found")).await;
+        return;
+    };
+
+    if endpoint.kind != EndpointKind::Ws {
+        close_ws(&mut socket, 4004, format!("Handler '{name}' not found")).await;
+        return;
+    }
+
+    let Some(handler_key) = endpoint.handler_key else {
+        close_ws(
+            &mut socket,
+            1011,
+            "Registered WebSocket is missing a handler key",
+        )
+        .await;
+        return;
+    };
+
+    let Some(handler) = state.ws_handlers.get(&handler_key).cloned() else {
+        close_ws(
+            &mut socket,
+            1011,
+            format!("No handler registered for WebSocket '{name}'"),
+        )
+        .await;
+        return;
+    };
+
+    let (sender, mut receiver) = mpsc::unbounded_channel();
+    let ws_sender = WebSocket::new(sender);
+
+    loop {
+        tokio::select! {
+            outbound = receiver.recv() => {
+                match outbound {
+                    Some(message) => {
+                        let text = serde_json::to_string(&message)
+                            .expect("WebSocket message serialization cannot fail");
+                        if socket.send(Message::Text(text.into())).await.is_err() {
+                            return;
+                        }
+                    }
+                    None => return,
+                }
+            }
+            inbound = socket.recv() => {
+                let Some(inbound) = inbound else {
+                    return;
+                };
+                match inbound {
+                    Ok(Message::Text(text)) => {
+                        let message = match WsMessage::from_json(text.as_str()) {
+                            Ok(message) => message,
+                            Err(_) => continue,
+                        };
+                        if !client_event_known(endpoint, &message.event) {
+                            continue;
+                        }
+                        let payload = json!({ "event": message.event, "data": message.data });
+                        let future = match catch_unwind(AssertUnwindSafe(|| {
+                            handler.call(payload, ws_sender.clone())
+                        })) {
+                            Ok(future) => future,
+                            Err(panic) => {
+                                close_ws(&mut socket, 1011, panic_message(panic)).await;
+                                return;
+                            }
+                        };
+                        match AssertUnwindSafe(future).catch_unwind().await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(error)) => {
+                                close_ws(&mut socket, 1011, error.message).await;
+                                return;
+                            }
+                            Err(panic) => {
+                                close_ws(&mut socket, 1011, panic_message(panic)).await;
+                                return;
+                            }
+                        }
+                    }
+                    Ok(Message::Close(_)) => return,
+                    Ok(Message::Ping(payload)) => {
+                        let _ = socket.send(Message::Pong(payload)).await;
+                    }
+                    Ok(Message::Pong(_)) | Ok(Message::Binary(_)) => {}
+                    Err(error) => {
+                        close_ws(&mut socket, 1011, error.to_string()).await;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn client_event_known(endpoint: &EndpointMeta, event: &str) -> bool {
+    endpoint.client_events.is_empty()
+        || endpoint
+            .client_events
+            .iter()
+            .any(|param| param.source_name == event)
+}
+
+async fn close_ws(socket: &mut AxumWebSocket, code: u16, reason: impl Into<String>) {
+    let _ = socket
+        .send(Message::Close(Some(CloseFrame {
+            code,
+            reason: reason.into().into(),
+        })))
+        .await;
 }
 
 async fn command_route(

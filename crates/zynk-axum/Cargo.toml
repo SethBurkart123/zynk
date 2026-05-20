@@ -11,7 +11,7 @@ categories = ["web-programming::http-server"]
 
 [dependencies]
 zynk-runtime = { version = "0.1.0", path = "../zynk-runtime" }
-axum = { version = "0.8", features = ["multipart"] }
+axum = { version = "0.8", features = ["multipart", "ws"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "fs"] }
 tower = "0.5"
 futures = "0.3"
