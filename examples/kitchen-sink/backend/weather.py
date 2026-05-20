@@ -135,6 +135,22 @@ async def stream_weather(city: str, interval_seconds: float, channel: Channel[We
     # Validate interval
     interval = max(1.0, min(60.0, interval_seconds))
 
+    if city == "__parity__":
+        await channel.send(
+            WeatherUpdate(
+                timestamp="2024-01-01T00:00:00",
+                city="Tokyo",
+                temperature=19.5,
+                conditions="Sunny",
+            )
+        )
+        return
+
+    if city == "__idle_keepalive__":
+        await asyncio.sleep(35.5)
+        await channel.send("hello")
+        return
+
     # Send updates until channel is closed
     update_count = 0
     max_updates = 100  # Safety limit

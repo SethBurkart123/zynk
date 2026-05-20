@@ -38,7 +38,7 @@ class ChannelMessage:
 
     def to_sse(self) -> str:
         """Convert to Server-Sent Events format."""
-        data_str = json.dumps(self.data) if not isinstance(self.data, str) else self.data
+        data_str = json.dumps(self.data)
         return f"event: {self.event}\ndata: {data_str}\n\n"
 
     def to_dict(self) -> dict[str, Any]:

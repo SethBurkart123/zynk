@@ -920,6 +920,21 @@ pub async fn chat(_chat_message: ChatMessage) {}
 
 async fn stream_weather_handler(payload: Value, channel: Channel) -> Result<(), ZynkError> {
     let city = get_string(&payload, "city", "city")?;
+    if city == "__parity__" {
+        let update = WeatherUpdate {
+            timestamp: "2024-01-01T00:00:00".to_string(),
+            city: "Tokyo".to_string(),
+            temperature: 19.5,
+            conditions: "Sunny".to_string(),
+        };
+        channel.send(to_value(update)?)?;
+        return Ok(());
+    }
+    if city == "__idle_keepalive__" {
+        tokio::time::sleep(std::time::Duration::from_millis(35_500)).await;
+        channel.send(json!("hello"))?;
+        return Ok(());
+    }
     let update = WeatherUpdate {
         timestamp: now_iso(),
         city: city.clone(),

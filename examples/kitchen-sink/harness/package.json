@@ -7,6 +7,7 @@
     "test:rust": "bun run index.ts --mode=rust",
     "test:cross": "bun run index.ts --mode=cross",
     "test:all": "bun run index.ts --mode=all",
+    "test:parity": "bun run index.ts --mode=parity",
     "test:effect": "bun run effect.ts",
     "typecheck": "bun x tsc --noEmit"
   },

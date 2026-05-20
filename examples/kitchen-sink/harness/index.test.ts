@@ -19,4 +19,4 @@ test("kitchen-sink harness passes", async () => {
   }
 
   expect(stdout).toContain("ALL PASSED");
-}, 30_000);
+}, 120_000);

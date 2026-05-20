@@ -16,6 +16,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use axum::body::{Body, Bytes};
 use axum::extract::multipart::MultipartRejection;
 use axum::extract::ws::{CloseFrame, Message, WebSocket as AxumWebSocket, WebSocketUpgrade};
+use axum::extract::DefaultBodyLimit;
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -428,7 +429,9 @@ impl ZynkBridge {
             )
             .route(
                 "/upload/{name}",
-                post(upload_route).with_state(self.state.clone()),
+                post(upload_route)
+                    .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
+                    .with_state(self.state.clone()),
             )
             .route(
                 "/static/{name}",

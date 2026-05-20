@@ -37,6 +37,12 @@ interface EvidenceEntry {
   raw?: string;
 }
 
+interface SseFrame {
+  event: string;
+  dataRaw: string;
+  data: unknown;
+}
+
 interface SuiteContext {
   label: string;
   baseUrl: string;
@@ -48,11 +54,11 @@ const testResults: { name: string; status: "PASS" | "FAIL"; detail?: string }[] 
 
 await Bun.$`mkdir -p ${LOG_DIR}`;
 
-function parseMode(): "python" | "rust" | "cross" | "all" {
+function parseMode(): "python" | "rust" | "cross" | "all" | "parity" {
   const arg = Bun.argv.slice(2).find((value) => value.startsWith("--mode="));
-  const value = (arg?.split("=", 2)[1] ?? process.env.ZYNK_HARNESS_MODE ?? "python") as "python" | "rust" | "cross" | "all";
-  if (!["python", "rust", "cross", "all"].includes(value)) {
-    throw new Error(`Unknown harness mode ${value}; expected python, rust, cross, or all`);
+  const value = (arg?.split("=", 2)[1] ?? process.env.ZYNK_HARNESS_MODE ?? "python") as "python" | "rust" | "cross" | "all" | "parity";
+  if (!["python", "rust", "cross", "all", "parity"].includes(value)) {
+    throw new Error(`Unknown harness mode ${value}; expected python, rust, cross, all, or parity`);
   }
   return value;
 }
@@ -69,6 +75,22 @@ function assert(condition: unknown, message: string): asserts condition {
 function assertEqual<T>(actual: T, expected: T, message: string): void {
   if (actual !== expected) {
     throw new Error(`${message}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function assertDeepEqual(actual: unknown, expected: unknown, message: string): void {
+  const actualJson = stableJson(actual);
+  const expectedJson = stableJson(expected);
+  if (actualJson !== expectedJson) {
+    throw new Error(`${message}: expected ${expectedJson}, got ${actualJson}`);
   }
 }
 
@@ -330,7 +352,7 @@ async function testChannel(ctx: SuiteContext): Promise<void> {
     channel.subscribe((message) => {
       clearTimeout(timeout);
       channel.close();
-      resolve(message);
+      resolve(message as WeatherUpdate);
     });
     channel.onError((error) => {
       clearTimeout(timeout);
@@ -397,6 +419,192 @@ async function testUpload(ctx: SuiteContext): Promise<void> {
   assertEqual(result.size, bytes.length, "uploadFile returns byte size");
   assert(result.contentType.startsWith("text/plain"), "uploadFile returns a text/plain content type");
   assertEqual(result.checksum.length, 16, "uploadFile returns truncated checksum");
+}
+
+function parseSseFrames(raw: string): SseFrame[] {
+  return raw
+    .split("\n\n")
+    .filter((chunk) => chunk.trim().length > 0)
+    .map((chunk) => {
+      const lines = chunk.split("\n");
+      const eventLine = lines.find((line) => line.startsWith("event: "));
+      const dataLine = lines.find((line) => line.startsWith("data: "));
+      assert(eventLine, `SSE frame missing event line: ${chunk}`);
+      assert(dataLine, `SSE frame missing data line: ${chunk}`);
+      const dataRaw = dataLine.slice("data: ".length);
+      return { event: eventLine.slice("event: ".length), dataRaw, data: JSON.parse(dataRaw) };
+    });
+}
+
+function normalizeSseFrame(frame: SseFrame): unknown {
+  if (frame.event === "message" && typeof frame.data === "object" && frame.data && "timestamp" in frame.data) {
+    return { event: frame.event, data: { ...frame.data, timestamp: "<normalized>" } };
+  }
+  if (frame.event === "close" && typeof frame.data === "object" && frame.data && "channelId" in frame.data) {
+    return { event: frame.event, data: { channelId: "<normalized>" } };
+  }
+  return { event: frame.event, data: frame.data };
+}
+
+async function captureSse(baseUrl: string, name: string, request: unknown): Promise<{ status: number; contentType: string; raw: string; frames: SseFrame[] }> {
+  const response = await fetch(`${baseUrl}/channel/${name}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  const raw = await response.text();
+  return {
+    status: response.status,
+    contentType: response.headers.get("content-type") ?? "",
+    raw,
+    frames: parseSseFrames(raw),
+  };
+}
+
+function stableUploadResult(payload: unknown): unknown {
+  const result = (payload as { result?: Record<string, unknown> }).result;
+  assert(result && typeof result === "object", `upload response missing object result: ${JSON.stringify(payload)}`);
+  return {
+    filename: result.filename,
+    size: result.size,
+    contentType: result.content_type,
+    checksum: result.checksum,
+  };
+}
+
+function stableUploadError(payload: unknown): unknown {
+  const error = payload as { code?: string; details?: unknown };
+  return { code: error.code, details: error.details };
+}
+
+async function postUpload(baseUrl: string, path: string, file: File, args: unknown): Promise<{ status: number; raw: string; json: unknown }> {
+  const body = new FormData();
+  body.append("files", file);
+  body.append("_args", JSON.stringify(args));
+  const response = await fetch(`${baseUrl}/upload/${path}`, { method: "POST", body });
+  const raw = await response.text();
+  return { status: response.status, raw, json: JSON.parse(raw) };
+}
+
+async function captureWebSocket(baseUrl: string): Promise<{ sent: unknown[]; received: unknown[] }> {
+  const wsUrl = `${baseUrl.replace(/^http/, "ws")}/ws/chat`;
+  const user = `parity-${runId}`;
+  const now = "2024-01-01T00:00:00.000Z";
+  const sent = [
+    { event: "join", data: { user, timestamp: now } },
+    { event: "chat_message", data: { user, text: "hello parity", timestamp: now } },
+    { event: "typing", data: { user, is_typing: true } },
+  ];
+  const received = await new Promise<unknown[]>((resolve, reject) => {
+    const frames: unknown[] = [];
+    const socket = new WebSocket(wsUrl);
+    let sentFrames = false;
+    const timeout = setTimeout(() => {
+      socket.close();
+      reject(new Error(`websocket parity timed out for ${wsUrl}: ${JSON.stringify(frames)}`));
+    }, 10_000);
+
+    socket.onopen = () => {
+      if (sentFrames) return;
+      sentFrames = true;
+      for (const frame of sent) socket.send(JSON.stringify(frame));
+    };
+    socket.onerror = () => {
+      clearTimeout(timeout);
+      reject(new Error(`websocket parity failed for ${wsUrl}`));
+    };
+    socket.onmessage = (event) => {
+      frames.push(JSON.parse(event.data));
+      const events = new Set(frames.map((frame) => (frame as { event?: string }).event));
+      if (events.has("user_joined") && events.has("status") && events.has("chat_message") && events.has("typing")) {
+        clearTimeout(timeout);
+        socket.close();
+        resolve(frames);
+      }
+    };
+  });
+  return { sent, received };
+}
+
+function normalizeWsFrames(frames: unknown[]): unknown[] {
+  return frames
+    .map((frame) => {
+      const message = frame as { event: string; data: Record<string, unknown> };
+      const data = { ...message.data };
+      if ("timestamp" in data) data.timestamp = "<normalized>";
+      if ("uptime_seconds" in data) data.uptime_seconds = "<normalized>";
+      return { event: message.event, data };
+    })
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
+}
+
+async function testCrossServerParity(): Promise<void> {
+  const weatherRequest = { city: "__parity__", interval_seconds: 60 };
+  const [pythonSse, rustSse] = await Promise.all([
+    captureSse(PYTHON_BASE_URL, "stream_weather", weatherRequest),
+    captureSse(RUST_BASE_URL, "stream_weather", weatherRequest),
+  ]);
+  await Bun.write(`${LOG_DIR}/parity-sse-python.txt`, pythonSse.raw);
+  await Bun.write(`${LOG_DIR}/parity-sse-rust.txt`, rustSse.raw);
+  await record({ kind: "parity-sse", name: "stream_weather/python", request: weatherRequest, raw: pythonSse.raw, response: { status: pythonSse.status, contentType: pythonSse.contentType } });
+  await record({ kind: "parity-sse", name: "stream_weather/rust", request: weatherRequest, raw: rustSse.raw, response: { status: rustSse.status, contentType: rustSse.contentType } });
+  assertEqual(pythonSse.status, 200, "Python stream_weather returns 200");
+  assertEqual(rustSse.status, 200, "Rust stream_weather returns 200");
+  assert(pythonSse.contentType.startsWith("text/event-stream"), `Python SSE content-type: ${pythonSse.contentType}`);
+  assert(rustSse.contentType.startsWith("text/event-stream"), `Rust SSE content-type: ${rustSse.contentType}`);
+  assertDeepEqual(pythonSse.frames.map(normalizeSseFrame), rustSse.frames.map(normalizeSseFrame), "stream_weather SSE frames match after channelId/timestamp normalization");
+  assert(pythonSse.raw.includes('event: close\ndata: {"channelId": '), "Python close frame uses camelCase channelId");
+  assert(rustSse.raw.includes('event: close\ndata: {"channelId": '), "Rust close frame uses camelCase channelId");
+
+  const idleRequest = { city: "__idle_keepalive__", interval_seconds: 60 };
+  const [pythonIdle, rustIdle] = await Promise.all([
+    captureSse(PYTHON_BASE_URL, "stream_weather", idleRequest),
+    captureSse(RUST_BASE_URL, "stream_weather", idleRequest),
+  ]);
+  await Bun.write(`${LOG_DIR}/parity-sse-idle-python.txt`, pythonIdle.raw);
+  await Bun.write(`${LOG_DIR}/parity-sse-idle-rust.txt`, rustIdle.raw);
+  await record({ kind: "parity-sse-idle", name: "stream_weather/python", request: idleRequest, raw: pythonIdle.raw });
+  await record({ kind: "parity-sse-idle", name: "stream_weather/rust", request: idleRequest, raw: rustIdle.raw });
+  for (const [label, idle] of [["Python", pythonIdle], ["Rust", rustIdle]] as const) {
+    const keepaliveCount = idle.frames.filter((frame) => frame.event === "keepalive" && frame.dataRaw === "{}").length;
+    assert(keepaliveCount >= 1, `${label} emitted at least one 35s idle keepalive`);
+    const stringFrame = idle.frames.find((frame) => frame.event === "message");
+    assert(stringFrame, `${label} emitted string message after idle keepalive`);
+    assertEqual(stringFrame.dataRaw, '"hello"', `${label} JSON-encodes string SSE data`);
+  }
+  assertDeepEqual(pythonIdle.frames.map(normalizeSseFrame), rustIdle.frames.map(normalizeSseFrame), "idle keepalive/string SSE frames match after channelId normalization");
+
+  const [pythonWs, rustWs] = await Promise.all([captureWebSocket(PYTHON_BASE_URL), captureWebSocket(RUST_BASE_URL)]);
+  await Bun.write(`${LOG_DIR}/parity-ws-python.json`, `${JSON.stringify(pythonWs, null, 2)}\n`);
+  await Bun.write(`${LOG_DIR}/parity-ws-rust.json`, `${JSON.stringify(rustWs, null, 2)}\n`);
+  await record({ kind: "parity-websocket", name: "chat/python", request: pythonWs.sent, response: pythonWs.received });
+  await record({ kind: "parity-websocket", name: "chat/rust", request: rustWs.sent, response: rustWs.received });
+  assertDeepEqual(normalizeWsFrames(pythonWs.received), normalizeWsFrames(rustWs.received), "WebSocket received frame structures match");
+  assert(pythonWs.received.every((frame) => typeof (frame as { event?: unknown }).event === "string" && !(frame as { event: string }).event.includes("-")), "Python WS event names are stable strings");
+  assert(rustWs.received.every((frame) => typeof (frame as { event?: unknown }).event === "string" && !(frame as { event: string }).event.includes("-")), "Rust WS event names are stable strings");
+
+  const uploadBytes = new TextEncoder().encode("hello parity upload\n");
+  const uploadFile = new File([uploadBytes], "parity.txt", { type: "text/plain" });
+  const [pythonUpload, rustUpload] = await Promise.all([
+    postUpload(PYTHON_BASE_URL, "upload_file", uploadFile, {}),
+    postUpload(RUST_BASE_URL, "upload_file", uploadFile, {}),
+  ]);
+  await record({ kind: "parity-upload", name: "upload_file/python", request: { filename: uploadFile.name, size: uploadFile.size, type: uploadFile.type }, raw: pythonUpload.raw });
+  await record({ kind: "parity-upload", name: "upload_file/rust", request: { filename: uploadFile.name, size: uploadFile.size, type: uploadFile.type }, raw: rustUpload.raw });
+  assertEqual(pythonUpload.status, 200, "Python upload_file returns 200");
+  assertEqual(rustUpload.status, 200, "Rust upload_file returns 200");
+  assertDeepEqual(stableUploadResult(pythonUpload.json), stableUploadResult(rustUpload.json), "upload_file response structures match after generated fields normalization");
+
+  const badFile = new File([new Uint8Array(5 * 1024 * 1024 + 1)], "too-large.png", { type: "image/png" });
+  const [pythonUploadError, rustUploadError] = await Promise.all([
+    postUpload(PYTHON_BASE_URL, "upload_image", badFile, { generate_thumbnail: false }),
+    postUpload(RUST_BASE_URL, "upload_image", badFile, { generate_thumbnail: false }),
+  ]);
+  await record({ kind: "parity-upload-error", name: "upload_image/python", raw: pythonUploadError.raw, response: pythonUploadError.json });
+  await record({ kind: "parity-upload-error", name: "upload_image/rust", raw: rustUploadError.raw, response: rustUploadError.json });
+  assertEqual(pythonUploadError.status, 400, "Python oversized upload_image returns 400");
+  assertEqual(rustUploadError.status, 400, "Rust oversized upload_image returns 400");
+  assertDeepEqual(stableUploadError(pythonUploadError.json), stableUploadError(rustUploadError.json), "oversized upload error code/details match");
 }
 
 async function testWebSocket(ctx: SuiteContext): Promise<void> {
@@ -467,28 +675,30 @@ async function main(): Promise<void> {
   await appendLog("harness.log", `run=${runId} mode=${mode} pythonBaseUrl=${PYTHON_BASE_URL} rustBaseUrl=${RUST_BASE_URL}\n`);
 
   if (mode === "rust" || mode === "all") await generateRustClient();
-  if (mode === "cross" || mode === "all") await generatePythonClient();
+  if (mode === "cross" || mode === "all" || mode === "parity") await generatePythonClient();
 
   const pythonClient = mode === "python" || mode === "cross" || mode === "all" ? await loadClient(PYTHON_API_PATH) : undefined;
   const rustClient = mode === "rust" || mode === "all" ? await loadClient(RUST_API_PATH) : undefined;
 
   const servers: ServerProcess[] = [];
   try {
-    if (mode === "python" || mode === "all") servers.push(await startPythonServer(PYTHON_BASE_URL));
-    if (mode === "rust" || mode === "cross" || mode === "all") servers.push(await startRustServer(RUST_BASE_URL));
+    if (mode === "python" || mode === "all" || mode === "parity") servers.push(await startPythonServer(PYTHON_BASE_URL));
+    if (mode === "rust" || mode === "cross" || mode === "all" || mode === "parity") servers.push(await startRustServer(RUST_BASE_URL));
 
     await Promise.all([
-      ...(mode === "python" || mode === "all" ? [waitForHealth(PYTHON_BASE_URL, "python")] : []),
-      ...(mode === "rust" || mode === "cross" || mode === "all" ? [waitForHealth(RUST_BASE_URL, "rust")] : []),
+      ...(mode === "python" || mode === "all" || mode === "parity" ? [waitForHealth(PYTHON_BASE_URL, "python")] : []),
+      ...(mode === "rust" || mode === "cross" || mode === "all" || mode === "parity" ? [waitForHealth(RUST_BASE_URL, "rust")] : []),
     ]);
 
     if (mode === "python") await runSuite({ label: "python", baseUrl: PYTHON_BASE_URL, client: pythonClient! });
     if (mode === "rust") await runSuite({ label: "rust", baseUrl: RUST_BASE_URL, client: rustClient! });
     if (mode === "cross") await runSuite({ label: "cross-python-client-on-rust", baseUrl: RUST_BASE_URL, client: pythonClient! });
+    if (mode === "parity") await step("cross-server byte parity: channel/ws/upload", testCrossServerParity);
     if (mode === "all") {
       await runSuite({ label: "python", baseUrl: PYTHON_BASE_URL, client: pythonClient! });
       await runSuite({ label: "rust", baseUrl: RUST_BASE_URL, client: rustClient! });
       await runSuite({ label: "cross-python-client-on-rust", baseUrl: RUST_BASE_URL, client: pythonClient! });
+      await step("cross-server byte parity: channel/ws/upload", testCrossServerParity);
     }
 
     await Bun.write(`${LOG_DIR}/summary.json`, `${JSON.stringify({ mode, pythonBaseUrl: PYTHON_BASE_URL, rustBaseUrl: RUST_BASE_URL, testResults, evidenceCount: evidence.length }, null, 2)}\n`);
