@@ -10,3 +10,4 @@ description = "Effect-TS generator for Zynk API graphs"
 [dependencies]
 zynk-schema = { path = "../zynk-schema" }
 zynk-codegen = { path = "../zynk-codegen" }
+serde_json.workspace = true

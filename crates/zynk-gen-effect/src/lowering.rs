@@ -35,23 +35,33 @@ pub fn lower_with_enums(
 }
 
 /// Apply Effect generator optional/nullable wrapping for a lowered expression.
-///
-/// This intentionally mirrors the Python lowerer: `optional` wins, and the
-/// nullable branch is only consulted when `optional == false`.
 pub fn apply_optional_nullable(expr: TypeExpr, optional: bool, nullable: bool) -> TypeExpr {
-    if optional {
-        return TypeExpr::new(
-            format!("{} | undefined", expr.ts),
+    match (optional, nullable) {
+        (true, true) => TypeExpr::new(
+            append_ts_flags(expr.ts, true, true),
+            format!("Schema.optionalWith({}, {{ nullable: true }})", expr.schema),
+        ),
+        (true, false) => TypeExpr::new(
+            append_ts_flags(expr.ts, true, false),
             format!("Schema.UndefinedOr({})", expr.schema),
-        );
-    }
-    if nullable {
-        return TypeExpr::new(
-            format!("{} | null", expr.ts),
+        ),
+        (false, true) => TypeExpr::new(
+            append_ts_flags(expr.ts, false, true),
             format!("Schema.NullOr({})", expr.schema),
-        );
+        ),
+        (false, false) => expr,
     }
-    expr
+}
+
+fn append_ts_flags(base: String, optional: bool, nullable: bool) -> String {
+    let mut parts = base.split(" | ").map(str::to_string).collect::<Vec<_>>();
+    if nullable && !parts.iter().any(|part| part == "null") {
+        parts.push("null".to_string());
+    }
+    if optional && !parts.iter().any(|part| part == "undefined") {
+        parts.push("undefined".to_string());
+    }
+    parts.join(" | ")
 }
 
 fn lower_base(
@@ -256,19 +266,7 @@ fn lower_literal_value(value: &Value) -> TypeExpr {
 }
 
 fn quote_js_string(value: &str) -> String {
-    let mut output = String::from("\"");
-    for ch in value.chars() {
-        match ch {
-            '\\' => output.push_str("\\\\"),
-            '"' => output.push_str("\\\""),
-            '\n' => output.push_str("\\n"),
-            '\r' => output.push_str("\\r"),
-            '\t' => output.push_str("\\t"),
-            _ => output.push(ch),
-        }
-    }
-    output.push('"');
-    output
+    serde_json::to_string(value).expect("serializing a string literal cannot fail")
 }
 
 fn dedupe_union(parts: Vec<String>) -> String {
@@ -339,23 +337,92 @@ fn find_model<'a>(graph: &'a ApiGraph, pascal_name: &str) -> Option<&'a ModelDef
 
 fn render_model_schema(model: &ModelDef, graph: &ApiGraph) -> String {
     let name = zynk_schema::naming::to_pascal_case(&model.name);
-    let fields = model
+    let rendered_fields = model
         .fields
         .iter()
         .map(|field| render_field(field, graph, &name))
+        .collect::<Vec<_>>();
+    let fields = rendered_fields
+        .iter()
+        .map(|field| field.schema_line.as_str())
         .collect::<Vec<_>>()
         .join(",\n");
+    let referenced = model
+        .fields
+        .iter()
+        .flat_map(|field| collect_model_refs(&field.ty))
+        .collect::<BTreeSet<_>>();
+    let is_self_recursive = referenced.contains(&name);
 
-    if fields.is_empty() {
+    if is_self_recursive {
+        let iface = render_recursive_interface(&name, &rendered_fields);
+        let schema = if fields.is_empty() {
+            format!("export const {name}: Schema.Schema<{name}, any> = Schema.Struct({{}})")
+        } else {
+            format!(
+                "export const {name}: Schema.Schema<{name}, any> = Schema.Struct({{\n{fields}\n}})"
+            )
+        };
+        format!("{iface}\n\n{schema}")
+    } else if fields.is_empty() {
         format!("export const {name} = Schema.Struct({{}})")
     } else {
         format!("export const {name} = Schema.Struct({{\n{fields}\n}})")
     }
 }
 
-fn render_field(field: &Field, graph: &ApiGraph, self_name: &str) -> String {
-    let expr = lower_for_model(&field.ty, graph, self_name);
-    format!("  {}: {}", field.wire_name, expr.schema)
+#[derive(Debug, Clone)]
+struct RenderedField {
+    schema_line: String,
+    interface_line: String,
+}
+
+fn render_recursive_interface(name: &str, fields: &[RenderedField]) -> String {
+    if fields.is_empty() {
+        return format!("export interface {name} {{}}");
+    }
+
+    format!(
+        "export interface {name} {{\n{}\n}}",
+        fields
+            .iter()
+            .map(|field| field.interface_line.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+}
+
+fn render_field(field: &Field, graph: &ApiGraph, self_name: &str) -> RenderedField {
+    let mut ty = field.ty.clone();
+    ty.optional = ty.optional || field.optional || !field.required;
+    ty.nullable = ty.nullable || field.nullable;
+
+    let expr = lower_for_model(&ty, graph, self_name);
+    let ts_name = field_ts_name(field);
+    let schema = if ts_name != field.source_name {
+        wrap_schema_from_key(&expr.schema, ty.optional, ty.nullable, &field.source_name)
+    } else {
+        expr.schema.clone()
+    };
+    let optional_marker = if ty.optional && ty.nullable { "?" } else { "" };
+
+    RenderedField {
+        schema_line: format!("  {ts_name}: {schema}"),
+        interface_line: format!("  readonly {ts_name}{optional_marker}: {}", expr.ts),
+    }
+}
+
+fn field_ts_name(field: &Field) -> String {
+    field.wire_name.clone()
+}
+
+fn wrap_schema_from_key(schema: &str, optional: bool, nullable: bool, source_name: &str) -> String {
+    let key = quote_js_string(source_name);
+    if optional && nullable {
+        format!("{schema}.pipe(Schema.fromKey({key}))")
+    } else {
+        format!("Schema.propertySignature({schema}).pipe(Schema.fromKey({key}))")
+    }
 }
 
 #[cfg(test)]
@@ -408,8 +475,11 @@ mod tests {
         let mut both = TypeRef::primitive("string");
         both.optional = true;
         both.nullable = true;
-        assert_eq!(lower(&both).ts, "string | undefined");
-        assert_eq!(lower(&both).schema, "Schema.UndefinedOr(Schema.String)");
+        assert_eq!(lower(&both).ts, "string | null | undefined");
+        assert_eq!(
+            lower(&both).schema,
+            "Schema.optionalWith(Schema.String, { nullable: true })"
+        );
     }
 
     #[test]
@@ -508,6 +578,121 @@ mod tests {
             lower_for_model(&TypeRef::model("Node"), &ApiGraph::new(), "Node").schema,
             "Schema.suspend(() => Node)"
         );
+    }
+
+    #[test]
+    fn render_model_schemas_apply_field_optional_nullable_matrix() {
+        let mut graph = ApiGraph::new();
+        let mut model = ModelDef::new("Matrix");
+        model.fields.push(Field::new(
+            "required_name",
+            "requiredName",
+            TypeRef::primitive("string"),
+            true,
+        ));
+
+        let mut optional = TypeRef::primitive("string");
+        optional.optional = true;
+        model
+            .fields
+            .push(Field::new("optional_name", "optionalName", optional, false));
+
+        let mut nullable = TypeRef::primitive("string");
+        nullable.nullable = true;
+        model
+            .fields
+            .push(Field::new("nullable_name", "nullableName", nullable, true));
+
+        let mut both = TypeRef::primitive("string");
+        both.optional = true;
+        both.nullable = true;
+        model
+            .fields
+            .push(Field::new("both_name", "bothName", both, false));
+        graph.insert_model(model);
+
+        let rendered = render_model_schemas(&graph).join("\n");
+
+        assert!(rendered.contains(
+            "requiredName: Schema.propertySignature(Schema.String).pipe(Schema.fromKey(\"required_name\"))"
+        ));
+        assert!(rendered.contains(
+            "optionalName: Schema.propertySignature(Schema.UndefinedOr(Schema.String)).pipe(Schema.fromKey(\"optional_name\"))"
+        ));
+        assert!(rendered.contains(
+            "nullableName: Schema.propertySignature(Schema.NullOr(Schema.String)).pipe(Schema.fromKey(\"nullable_name\"))"
+        ));
+        assert!(rendered.contains(
+            "bothName: Schema.optionalWith(Schema.String, { nullable: true }).pipe(Schema.fromKey(\"both_name\"))"
+        ));
+    }
+
+    #[test]
+    fn render_model_schemas_emit_self_recursive_interfaces_before_schemas() {
+        let mut graph = ApiGraph::new();
+        let mut node = ModelDef::new("Node");
+        node.fields.push(Field::new(
+            "children",
+            "children",
+            TypeRef::array(TypeRef::model("Node")),
+            true,
+        ));
+        graph.insert_model(node);
+
+        let rendered = render_model_schemas(&graph).join("\n");
+        let iface = rendered
+            .find("export interface Node")
+            .expect("interface emitted");
+        let schema = rendered.find("export const Node").expect("schema emitted");
+
+        assert!(
+            iface < schema,
+            "recursive interface must precede schema: {rendered}"
+        );
+        assert!(rendered.contains("export const Node: Schema.Schema<Node, any> = Schema.Struct"));
+        assert!(rendered.contains("Schema.Array(Schema.suspend(() => Node))"));
+    }
+
+    #[test]
+    fn render_model_schemas_preserve_snake_case_wire_keys_with_from_key() {
+        let mut graph = ApiGraph::new();
+        let mut profile = ModelDef::new("UserProfile");
+        profile.fields.push(Field::new(
+            "user_id",
+            "userId",
+            TypeRef::primitive("number"),
+            true,
+        ));
+        profile.fields.push(Field::new(
+            "full_name",
+            "fullName",
+            TypeRef::primitive("string"),
+            true,
+        ));
+        profile.fields.push(Field::new(
+            "quoted_\"key",
+            "quotedKey",
+            TypeRef::primitive("string"),
+            true,
+        ));
+        profile
+            .fields
+            .push(Field::new("id", "id", TypeRef::primitive("number"), true));
+        graph.insert_model(profile);
+
+        let rendered = render_model_schemas(&graph).join("\n");
+
+        assert!(rendered.contains(
+            "userId: Schema.propertySignature(Schema.Number).pipe(Schema.fromKey(\"user_id\"))"
+        ));
+        assert!(rendered.contains(
+            "fullName: Schema.propertySignature(Schema.String).pipe(Schema.fromKey(\"full_name\"))"
+        ));
+        assert!(rendered.contains(
+            "quotedKey: Schema.propertySignature(Schema.String).pipe(Schema.fromKey(\"quoted_\\\"key\"))"
+        ));
+        assert!(rendered.contains("id: Schema.Number"));
+        assert!(!rendered.contains("Schema.fromKey(\"id\")"));
     }
 
     #[test]
