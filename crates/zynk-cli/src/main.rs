@@ -26,6 +26,43 @@ enum Commands {
     Gen(GenArgs),
     /// Watch user source files and regenerate a TypeScript client on changes.
     Dev(DevArgs),
+    /// Inspect and debug Zynk schemas.
+    Schema(SchemaArgs),
+}
+
+#[derive(Debug, Args)]
+struct SchemaArgs {
+    #[command(subcommand)]
+    command: SchemaCommands,
+}
+
+#[derive(Debug, Subcommand)]
+enum SchemaCommands {
+    /// Print the app's IR JSON schema to stdout.
+    Dump(SchemaDumpArgs),
+}
+
+#[derive(Debug, Args)]
+struct SchemaDumpArgs {
+    /// Python Bridge object as <module>:<attr>.
+    #[arg(long)]
+    app: Option<String>,
+
+    /// Python executable used with --app.
+    #[arg(long, default_value = "python")]
+    python: OsString,
+
+    /// Print a single-line JSON document instead of pretty-printed JSON.
+    #[arg(long)]
+    compact: bool,
+
+    /// Schema-dump command to run if --app is not provided.
+    #[arg(
+        value_name = "APP_CMD",
+        trailing_var_arg = true,
+        allow_hyphen_values = true
+    )]
+    app_cmd: Vec<OsString>,
 }
 
 #[derive(Debug, Args)]
@@ -163,7 +200,35 @@ fn run() -> Result<()> {
     match cli.command {
         Commands::Gen(args) => gen(args),
         Commands::Dev(args) => dev(args),
+        Commands::Schema(args) => schema(args),
     }
+}
+
+fn schema(args: SchemaArgs) -> Result<()> {
+    match args.command {
+        SchemaCommands::Dump(args) => schema_dump(args),
+    }
+}
+
+fn schema_dump(args: SchemaDumpArgs) -> Result<()> {
+    let dump_command = schema_dump_command(&args)?;
+    let mut command = match &dump_command {
+        SchemaDumpCommand::PythonApp { python, app } => python_app_command(python, app)?,
+        SchemaDumpCommand::Direct(parts) => direct_schema_dump_command(parts)?,
+    };
+    let output = command
+        .stdin(Stdio::null())
+        .output()
+        .context("failed to spawn schema dump subprocess")?;
+    let graph = schema_from_output(output.status.success(), &output.stdout, &output.stderr)?;
+    let json = if args.compact {
+        serde_json::to_string(&graph).context("failed to serialize ApiGraph as compact JSON")?
+    } else {
+        serde_json::to_string_pretty(&graph)
+            .context("failed to serialize ApiGraph as pretty JSON")?
+    };
+    println!("{json}");
+    Ok(())
 }
 
 fn gen(args: GenArgs) -> Result<()> {
@@ -432,6 +497,15 @@ fn direct_schema_dump_command(parts: &[OsString]) -> Result<Command> {
 }
 
 fn dev_dump_command(args: &DevArgs) -> Result<SchemaDumpCommand> {
+    dump_command_from_app_or_parts(
+        args.app.as_ref(),
+        &args.python,
+        &args.app_cmd,
+        "zynk dev requires either --app <module:attr> or a schema dump command after --",
+    )
+}
+
+fn schema_dump_command(args: &SchemaDumpArgs) -> Result<SchemaDumpCommand> {
     if let Some(app) = &args.app {
         return Ok(SchemaDumpCommand::PythonApp {
             python: args.python.clone(),
@@ -439,31 +513,72 @@ fn dev_dump_command(args: &DevArgs) -> Result<SchemaDumpCommand> {
         });
     }
 
-    if let Some(command) = infer_python_app_command(&args.app_cmd) {
+    if let Some(command) = infer_top_level_python_app_command(&args.app_cmd) {
         return Ok(command);
     }
 
     if args.app_cmd.is_empty() {
-        bail!("zynk dev requires either --app <module:attr> or a schema dump command after --");
+        bail!("zynk schema dump requires either --app <module:attr> or a schema dump command after --");
     }
     Ok(SchemaDumpCommand::Direct(args.app_cmd.clone()))
+}
+
+fn dump_command_from_app_or_parts(
+    app: Option<&String>,
+    python: &OsString,
+    parts: &[OsString],
+    empty_message: &'static str,
+) -> Result<SchemaDumpCommand> {
+    if let Some(app) = app {
+        return Ok(SchemaDumpCommand::PythonApp {
+            python: python.clone(),
+            app: app.clone(),
+        });
+    }
+
+    if let Some(command) = infer_python_app_command(parts) {
+        return Ok(command);
+    }
+
+    if parts.is_empty() {
+        bail!(empty_message);
+    }
+    Ok(SchemaDumpCommand::Direct(parts.to_vec()))
 }
 
 fn infer_python_app_command(parts: &[OsString]) -> Option<SchemaDumpCommand> {
     let python = parts.first()?;
     let script = parts.get(1)?;
-    let script_path = Path::new(script);
-    if script_path.extension().and_then(|ext| ext.to_str()) != Some("py") {
-        return None;
-    }
-    let module = script_path.file_stem()?.to_str()?;
-    if !is_python_identifier(module) {
+    let module = top_level_python_module_name(script)?;
+    Some(SchemaDumpCommand::PythonApp {
+        python: python.clone(),
+        app: format!("{module}:app"),
+    })
+}
+
+fn infer_top_level_python_app_command(parts: &[OsString]) -> Option<SchemaDumpCommand> {
+    let python = parts.first()?;
+    let script = parts.get(1)?;
+    let module = top_level_python_module_name(script)?;
+    if Path::new(script)
+        .parent()
+        .is_some_and(|parent| !parent.as_os_str().is_empty())
+    {
         return None;
     }
     Some(SchemaDumpCommand::PythonApp {
         python: python.clone(),
         app: format!("{module}:app"),
     })
+}
+
+fn top_level_python_module_name(script: &OsString) -> Option<&str> {
+    let script_path = Path::new(script);
+    if script_path.extension().and_then(|ext| ext.to_str()) != Some("py") {
+        return None;
+    }
+    let module = script_path.file_stem()?.to_str()?;
+    is_python_identifier(module).then_some(module)
 }
 
 fn dump_python_schema(args: &GenArgs) -> Result<ApiGraph> {
