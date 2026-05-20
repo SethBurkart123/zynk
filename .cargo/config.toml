@@ -1,0 +1,5 @@
+[patch.crates-io]
+zynk-schema = { path = "crates/zynk-schema" }
+zynk-codegen = { path = "crates/zynk-codegen" }
+zynk-gen-ts = { path = "crates/zynk-gen-ts" }
+zynk-gen-effect = { path = "crates/zynk-gen-effect" }

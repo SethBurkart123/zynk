@@ -47,19 +47,24 @@ Publishing to crates.io is a manual maintainer step. `zynk-cli` depends on the Z
 4. `zynk-gen-effect`
 5. `zynk-cli`
 
-Before publishing the CLI, verify the crate metadata and package contents from the repository root:
+Before publishing, verify the crate metadata and package contents from the repository root with `cargo package` for every crate in the release set:
 
 ```bash
-cargo fmt -p zynk-cli -- --check
-cargo clippy -p zynk-cli --all-targets -- -D warnings
-cargo test -p zynk-cli --all-targets
-cargo publish --dry-run -p zynk-cli
+cargo package -p zynk-schema
+cargo package -p zynk-codegen
+cargo package -p zynk-gen-ts
+cargo package -p zynk-gen-effect
+cargo package -p zynk-cli
 ```
 
-If the dry run succeeds, publish the crate explicitly:
+Publish each crate explicitly in dependency order, waiting for crates.io to index each dependency before publishing the next crate:
 
 ```bash
+cargo publish -p zynk-schema
+cargo publish -p zynk-codegen
+cargo publish -p zynk-gen-ts
+cargo publish -p zynk-gen-effect
 cargo publish -p zynk-cli
 ```
 
-Do not use `--allow-dirty` for a release. Confirm that `Cargo.toml` has the intended `version`, `license`, `repository`, `description`, `keywords`, `categories`, `readme`, and `[[bin]] name = "zynk"` metadata before running the final publish command.
+Do not use `--allow-dirty` for a release. Confirm that each `Cargo.toml` has the intended `version`, `license`, `repository`, `description`, `keywords`, `categories`, and `readme` metadata before running the final publish command. For `zynk-cli`, also confirm `package.name = "zynk-cli"` and `[[bin]] name = "zynk"`.
