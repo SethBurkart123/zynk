@@ -16,6 +16,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 notify = "8"
 serde_json.workspace = true
+tokio = { version = "1", features = ["macros", "rt", "signal", "time"] }
 zynk-codegen = { path = "../zynk-codegen" }
 zynk-gen-effect = { path = "../zynk-gen-effect" }
 zynk-gen-ts = { path = "../zynk-gen-ts" }
