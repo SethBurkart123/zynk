@@ -106,6 +106,7 @@ fn dev_writes_initial_files_and_regenerates_after_python_change() {
 
     let child = spawn_dev(&app_dir, &out);
     wait_for_api_containing(&out, "firstEndpoint", Duration::from_secs(5));
+    wait_for_file(&out.join("_internal.ts"), Duration::from_secs(5));
     assert!(out.join("_internal.ts").is_file());
 
     write_app(&app_dir, "second_endpoint", None);
