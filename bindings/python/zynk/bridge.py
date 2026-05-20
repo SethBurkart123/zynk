@@ -2,7 +2,7 @@
 Bridge Module
 
 The main Bridge class that orchestrates the Zynk server.
-Handles FastAPI setup, routing, hot-reloading, and TypeScript generation.
+Handles FastAPI setup, routing, and hot-reloading.
 """
 
 from __future__ import annotations
@@ -38,7 +38,6 @@ from .errors import (
     UploadValidationError,
     ValidationError,
 )
-from .generator import generate_typescript
 from .registry import CommandInfo, get_registry
 from .runtime.dispatch import (
     execute_channel_command as dispatch_channel_command,
@@ -138,7 +137,6 @@ class Bridge:
 
     Wraps FastAPI and Uvicorn to provide:
     - Automatic command routing
-    - TypeScript client generation
     - Hot-reloading in development
     - Channel/streaming support
 
@@ -147,7 +145,6 @@ class Bridge:
         import users  # Side-effect import registers commands
 
         app = Bridge(
-            generate_ts="../frontend/src/api.ts",
             host="127.0.0.1",
             port=8000
         )
@@ -158,7 +155,6 @@ class Bridge:
 
     def __init__(
         self,
-        generate_ts: str | None = None,
         host: str = "127.0.0.1",
         port: int = 8000,
         cors_origins: list[str] | None = None,
@@ -173,8 +169,6 @@ class Bridge:
         Initialize the Bridge.
 
         Args:
-            generate_ts: Path where TypeScript client will be generated.
-                         If None, no TypeScript generation occurs.
             host: Host to bind the server to.
             port: Port to bind the server to.
             cors_origins: List of allowed CORS origins. Defaults to ["*"].
@@ -185,7 +179,6 @@ class Bridge:
             reload_includes: Glob patterns to include in file watching (dev mode only).
             reload_excludes: Glob patterns to exclude from file watching (dev mode only).
         """
-        self.generate_ts = generate_ts
         self.host = host
         self.port = port
         self.cors_origins = cors_origins or ["*"]
@@ -195,7 +188,6 @@ class Bridge:
         self.reload_dirs = reload_dirs
         self.reload_includes = reload_includes
         self.reload_excludes = reload_excludes
-        self._ts_generated = False
         self._shutdown_callbacks: list[Callable[[], Any]] = []
 
         setup_logging(logging.DEBUG if debug else logging.INFO, debug=debug)
@@ -490,16 +482,6 @@ class Bridge:
         """Return the registered API graph as canonical ``zynk-schema`` JSON."""
         return dump_api_graph_json(get_registry().get_api_graph())
 
-    def generate_typescript_client(self) -> None:
-        """Generate the TypeScript client if configured."""
-        if self.generate_ts:
-            try:
-                generate_typescript(self.generate_ts)
-                self._ts_generated = True
-                logger.info(f"✓ TypeScript client generated: {self.generate_ts}")
-            except Exception:
-                logger.exception("✗ Failed to generate TypeScript client")
-
     def run(self, dev: bool = False) -> None:
         """
         Run the server.
@@ -508,8 +490,6 @@ class Bridge:
             dev: Enable development mode with hot-reloading.
         """
         import uvicorn
-
-        self.generate_typescript_client()
 
         registry = get_registry()
         commands = registry.get_all_commands()
@@ -544,8 +524,6 @@ class Bridge:
             lines.append(f"Static:     {len(statics)}")
         if message_handlers:
             lines.append(f"WebSockets: {len(message_handlers)}")
-        if self.generate_ts:
-            lines.append(f"TypeScript: {self.generate_ts}")
 
         console = Console()
         panel = Panel.fit("\n".join(lines), title=self.title, border_style="blue")
@@ -577,7 +555,6 @@ class Bridge:
 
         user_modules = self._collect_user_modules(commands, message_handlers, uploads)
         server.set_config(
-            generate_ts=self.generate_ts,
             host=self.host,
             port=self.port,
             cors_origins=self.cors_origins,
@@ -659,5 +636,4 @@ def create_app() -> FastAPI:
     # This is handled by Uvicorn's reload mechanism
 
     bridge = Bridge(**_bridge_config)
-    bridge.generate_typescript_client()
     return bridge.app

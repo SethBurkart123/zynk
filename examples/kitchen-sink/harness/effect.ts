@@ -97,7 +97,7 @@ async function pump(stream: ReadableStream<Uint8Array> | null, file: string): Pr
 }
 
 async function startServer(): Promise<ServerProcess> {
-  const proc = Bun.spawn(["uv", "run", "python", "-c", "import main; main.app.port = int(__import__('os').environ['PORT']); main.app.generate_ts = None; main.app.run(dev=False)"], {
+  const proc = Bun.spawn(["uv", "run", "python", "-c", "import main; main.app.port = int(__import__('os').environ['PORT']); main.app.run(dev=False)"], {
     cwd: BACKEND_DIR,
     env: {
       ...process.env,
