@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/zynk-schema",
+    "crates/zynk-codegen",
 ]
 resolver = "2"
 
