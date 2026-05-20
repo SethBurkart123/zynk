@@ -144,6 +144,14 @@ pub struct TaskStats {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskWireCheck {
+    pub kind: String,
+    pub priority: TaskPriority,
+    pub status: TaskStatus,
+    pub numeric_status: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WeatherData {
     pub city: String,
     pub temperature: f64,
@@ -734,6 +742,21 @@ pub async fn delete_task(task_id: i64) -> bool {
 }
 
 #[zynk::command]
+pub async fn echo_task_wire_check(payload: TaskWireCheck) -> TaskWireCheck {
+    payload
+}
+
+#[zynk::command]
+pub async fn get_task_wire_check() -> TaskWireCheck {
+    TaskWireCheck {
+        kind: "task_wire_check".to_string(),
+        priority: TaskPriority::Urgent,
+        status: TaskStatus::InProgress,
+        numeric_status: 2,
+    }
+}
+
+#[zynk::command]
 pub async fn get_task_stats() -> TaskStats {
     let state = state();
     let guard = state.lock().expect("application state lock");
@@ -1075,6 +1098,8 @@ fn bridge_with_handlers() -> ZynkBridge {
         .title("Kitchen Sink API")
         .register_endpoint_meta(&CREATE_LABEL_META)
         .register_endpoint_meta(&CREATE_TASK_META)
+        .register_endpoint_meta(&ECHO_TASK_WIRE_CHECK_META)
+        .register_endpoint_meta(&GET_TASK_WIRE_CHECK_META)
         .register_endpoint_meta(&DOWNLOAD_SAMPLE_META)
         .register_endpoint_meta(&GET_FORECAST_META)
         .register_endpoint_meta(&LIST_USERS_META)
@@ -1278,6 +1303,30 @@ fn bridge_with_handlers() -> ZynkBridge {
                     .remove(&get_i64(&payload, "task_id", "taskId")?)
                     .is_some();
                 to_value(deleted)
+            },
+        )
+        .register_handler(
+            HandlerKey("rust_axum_kitchen_sink::echo_task_wire_check"),
+            |payload: Value| {
+                let object = payload.as_object().ok_or_else(|| {
+                    ZynkError::new(VALIDATION_ERROR, "Request body must be a JSON object")
+                })?;
+                let payload = maybe(object, "payload", "payload")
+                    .cloned()
+                    .ok_or_else(|| ZynkError::new(VALIDATION_ERROR, "Missing payload"))?;
+                let check: TaskWireCheck = typed_payload(payload)?;
+                to_value(check)
+            },
+        )
+        .register_handler(
+            HandlerKey("rust_axum_kitchen_sink::get_task_wire_check"),
+            |_payload: Value| {
+                to_value(TaskWireCheck {
+                    kind: "task_wire_check".to_string(),
+                    priority: TaskPriority::Urgent,
+                    status: TaskStatus::InProgress,
+                    numeric_status: 2,
+                })
             },
         )
         .register_handler(
@@ -1558,6 +1607,14 @@ static CREATE_TASK_PARAMS: &[ParamMeta] = &[
     },
 ];
 
+static ECHO_TASK_WIRE_CHECK_PARAMS: &[ParamMeta] = &[ParamMeta {
+    source_name: "payload",
+    wire_name: "payload",
+    ty: TypeRefStatic::model("TaskWireCheck"),
+    required: true,
+    default: None,
+}];
+
 static DOWNLOAD_SAMPLE_PARAMS: &[ParamMeta] = &[ParamMeta {
     source_name: "filename",
     wire_name: "filename",
@@ -1639,6 +1696,40 @@ static CREATE_TASK_META: EndpointMeta = EndpointMeta {
     server_events: &[],
     client_events: &[],
     handler_key: Some(HandlerKey("rust_axum_kitchen_sink::create_task")),
+};
+
+static ECHO_TASK_WIRE_CHECK_META: EndpointMeta = EndpointMeta {
+    name: "echo_task_wire_check",
+    kind: EndpointKind::Rpc,
+    module: Some("tasks"),
+    doc: None,
+    params: ECHO_TASK_WIRE_CHECK_PARAMS,
+    returns: TypeRefStatic::model("TaskWireCheck"),
+    channel_item: None,
+    file_param: None,
+    multi_file: false,
+    max_size: None,
+    allowed_types: &[],
+    server_events: &[],
+    client_events: &[],
+    handler_key: Some(HandlerKey("rust_axum_kitchen_sink::echo_task_wire_check")),
+};
+
+static GET_TASK_WIRE_CHECK_META: EndpointMeta = EndpointMeta {
+    name: "get_task_wire_check",
+    kind: EndpointKind::Rpc,
+    module: Some("tasks"),
+    doc: None,
+    params: &[],
+    returns: TypeRefStatic::model("TaskWireCheck"),
+    channel_item: None,
+    file_param: None,
+    multi_file: false,
+    max_size: None,
+    allowed_types: &[],
+    server_events: &[],
+    client_events: &[],
+    handler_key: Some(HandlerKey("rust_axum_kitchen_sink::get_task_wire_check")),
 };
 
 static DOWNLOAD_SAMPLE_META: EndpointMeta = EndpointMeta {
@@ -1902,6 +1993,10 @@ fn kitchen_sink_schema_graph() -> ApiGraph {
         json!("cancelled"),
     ];
     graph.insert_enum(status);
+    let mut numeric_status = EnumDef::new("NumericTaskStatus");
+    numeric_status.doc = Some("Numeric status codes for wire-fidelity checks.".to_string());
+    numeric_status.values = vec![json!(1), json!(2), json!(3)];
+    graph.insert_enum(numeric_status);
 
     insert_model(
         &mut graph,
@@ -2018,6 +2113,36 @@ fn kitchen_sink_schema_graph() -> ApiGraph {
                 "by_priority",
                 "byPriority",
                 TypeRef::record(TypeRef::primitive("string"), TypeRef::primitive("number")),
+                true,
+            ),
+        ],
+    );
+    insert_model(
+        &mut graph,
+        "TaskWireCheck",
+        "A literal-bearing payload used to verify wire fidelity.",
+        vec![
+            field(
+                "kind",
+                "kind",
+                TypeRef::literal(json!("task_wire_check")),
+                true,
+            ),
+            field(
+                "priority",
+                "priority",
+                TypeRef::enum_ref("TaskPriority"),
+                true,
+            ),
+            field("status", "status", TypeRef::enum_ref("TaskStatus"), true),
+            field(
+                "numeric_status",
+                "numericStatus",
+                TypeRef::union(vec![
+                    TypeRef::literal(json!(1)),
+                    TypeRef::literal(json!(2)),
+                    TypeRef::literal(json!(3)),
+                ]),
                 true,
             ),
         ],

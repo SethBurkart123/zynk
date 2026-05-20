@@ -92,6 +92,16 @@ export interface TaskStats {
 }
 
 /**
+ * A literal-bearing payload used to verify wire fidelity.
+ */
+export interface TaskWireCheck {
+    kind: "task_wire_check";
+    priority: "low" | "medium" | "high" | "urgent";
+    status: "todo" | "in_progress" | "done" | "cancelled";
+    numericStatus: 1 | 2 | 3;
+}
+
+/**
  * Indicates a user is typing.
  */
 export interface TypingIndicator {
@@ -337,6 +347,14 @@ export function downloadSampleUrl(args: { filename?: string }): string {
 }
 
 /**
+ * Echo a literal and enum payload without coercing wire values.
+ */
+export async function echoTaskWireCheck(args: { payload: TaskWireCheck }): Promise<TaskWireCheck> {
+    const _r = await request<any>("echo_task_wire_check", { payload: { kind: args.payload.kind, priority: args.payload.priority, status: args.payload.status, numeric_status: args.payload.numericStatus } });
+    return { kind: _r.kind, priority: _r.priority, status: _r.status, numericStatus: _r.numeric_status };
+}
+
+/**
  * Get weather forecast for a city.
  * 
  * Returns a list of forecasts for the specified number of days.
@@ -360,6 +378,14 @@ export async function getTask(args: { taskId: number }): Promise<Task> {
 export async function getTaskStats(): Promise<TaskStats> {
     const _r = await request<any>("get_task_stats", {});
     return { total: _r.total, todo: _r.todo, inProgress: _r.in_progress, done: _r.done, cancelled: _r.cancelled, byPriority: _r.by_priority };
+}
+
+/**
+ * Return a canonical literal and enum payload.
+ */
+export async function getTaskWireCheck(): Promise<TaskWireCheck> {
+    const _r = await request<any>("get_task_wire_check", {});
+    return { kind: _r.kind, priority: _r.priority, status: _r.status, numericStatus: _r.numeric_status };
 }
 
 /**

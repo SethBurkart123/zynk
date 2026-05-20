@@ -11,6 +11,7 @@
     "test:errors": "bun run index.ts --mode=errors",
     "test:debug-flag": "bun run index.ts --mode=debug-flag",
     "test:case-normalization": "bun run index.ts --mode=case-normalization",
+    "test:wire-fidelity": "bun run index.ts --mode=wire-fidelity",
     "test:effect": "bun run effect.ts",
     "typecheck": "bun x tsc --noEmit"
   },

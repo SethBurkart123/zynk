@@ -233,20 +233,33 @@ fn lower_enum(ty: &TypeRef, enums: &BTreeMap<String, EnumDef>) -> TypeExpr {
     let Some(enum_def) = enums.get(name) else {
         return TypeExpr::new("string", "Schema.String");
     };
-    if enum_def.values.is_empty() || !enum_def.values.iter().all(Value::is_string) {
+    if enum_def.values.is_empty() {
         return TypeExpr::new("string", "Schema.String");
     }
 
     let literals = enum_def
         .values
         .iter()
-        .filter_map(Value::as_str)
-        .map(quote_js_string)
+        .map(lower_literal_value)
         .collect::<Vec<_>>();
+    if literals.iter().any(|literal| literal.ts == "unknown") {
+        return TypeExpr::new("string", "Schema.String");
+    }
 
     TypeExpr::new(
-        literals.join(" | "),
-        format!("Schema.Literal({})", literals.join(", ")),
+        literals
+            .iter()
+            .map(|literal| literal.ts.clone())
+            .collect::<Vec<_>>()
+            .join(" | "),
+        format!(
+            "Schema.Literal({})",
+            literals
+                .into_iter()
+                .map(|literal| literal.ts)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     )
 }
 
@@ -560,16 +573,16 @@ mod tests {
     }
 
     #[test]
-    fn non_string_enum_values_fall_back_to_schema_string() {
+    fn lowers_numeric_enum_values_to_effect_literal_schema() {
         let mut graph = ApiGraph::new();
         let mut status = EnumDef::new("Status");
-        status.values = vec![json!(1), json!(2)];
+        status.values = vec![json!(1), json!(2), json!(3)];
         graph.insert_enum(status);
 
         let expr = lower_with_graph(&TypeRef::enum_ref("Status"), &graph);
 
-        assert_eq!(expr.ts, "string");
-        assert_eq!(expr.schema, "Schema.String");
+        assert_eq!(expr.ts, "1 | 2 | 3");
+        assert_eq!(expr.schema, "Schema.Literal(1, 2, 3)");
     }
 
     #[test]

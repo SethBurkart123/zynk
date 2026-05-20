@@ -5,6 +5,7 @@ import type * as GeneratedClient from "../frontend/src/generated/api";
 
 type Client = typeof GeneratedClient;
 type Task = GeneratedClient.Task;
+type TaskWireCheck = GeneratedClient.TaskWireCheck;
 type WeatherUpdate = GeneratedClient.WeatherUpdate;
 
 const ROOT = new URL("../../..", import.meta.url).pathname.replace(/\/$/, "");
@@ -54,13 +55,13 @@ const testResults: { name: string; status: "PASS" | "FAIL"; detail?: string }[] 
 
 await Bun.$`mkdir -p ${LOG_DIR}`;
 
-type HarnessMode = "python" | "rust" | "cross" | "all" | "parity" | "errors" | "debug-flag" | "case-normalization";
+type HarnessMode = "python" | "rust" | "cross" | "all" | "parity" | "errors" | "debug-flag" | "case-normalization" | "wire-fidelity";
 
 function parseMode(): HarnessMode {
   const arg = Bun.argv.slice(2).find((value) => value.startsWith("--mode="));
   const value = (arg?.split("=", 2)[1] ?? process.env.ZYNK_HARNESS_MODE ?? "python") as HarnessMode;
-  if (!["python", "rust", "cross", "all", "parity", "errors", "debug-flag", "case-normalization"].includes(value)) {
-    throw new Error(`Unknown harness mode ${value}; expected python, rust, cross, all, parity, errors, debug-flag, or case-normalization`);
+  if (!["python", "rust", "cross", "all", "parity", "errors", "debug-flag", "case-normalization", "wire-fidelity"].includes(value)) {
+    throw new Error(`Unknown harness mode ${value}; expected python, rust, cross, all, parity, errors, debug-flag, case-normalization, or wire-fidelity`);
   }
   return value;
 }
@@ -599,6 +600,98 @@ async function testCaseNormalizationParity(): Promise<void> {
   }
 }
 
+function taskWireCheckFixture(): TaskWireCheck {
+  return {
+    kind: "task_wire_check",
+    priority: "urgent",
+    status: "in_progress",
+    numericStatus: 2,
+  };
+}
+
+function assertTaskWireCheck(payload: TaskWireCheck, message: string): void {
+  const kind: "task_wire_check" = payload.kind;
+  const priority: "low" | "medium" | "high" | "urgent" = payload.priority;
+  const status: "todo" | "in_progress" | "done" | "cancelled" = payload.status;
+  const numericStatus: 1 | 2 | 3 = payload.numericStatus;
+
+  assertEqual(kind, "task_wire_check", `${message}: literal kind preserved`);
+  assertEqual(priority, "urgent", `${message}: enum priority preserved`);
+  assertEqual(status, "in_progress", `${message}: enum status preserved`);
+  assertEqual(numericStatus, 2, `${message}: numeric literal union preserved`);
+  assertEqual(typeof numericStatus, "number", `${message}: numeric enum/literal stays numeric on the wire`);
+}
+
+function unwrapResult<T>(payload: unknown): T {
+  const result = (payload as { result?: T }).result;
+  assert(result !== undefined, `response missing result envelope: ${JSON.stringify(payload)}`);
+  return result;
+}
+
+async function testWireFidelityWithClient(ctx: SuiteContext): Promise<void> {
+  ctx.client.initBridge(ctx.baseUrl);
+  const fixture = taskWireCheckFixture();
+  const literal: "task_wire_check" = fixture.kind;
+  const priority: "low" | "medium" | "high" | "urgent" = fixture.priority;
+  const status: "todo" | "in_progress" | "done" | "cancelled" = fixture.status;
+  const numericStatus: 1 | 2 | 3 = fixture.numericStatus;
+  assertEqual(literal, "task_wire_check", `${ctx.label}: compile-time literal fixture value`);
+  assertEqual(priority, "urgent", `${ctx.label}: compile-time priority union fixture value`);
+  assertEqual(status, "in_progress", `${ctx.label}: compile-time status union fixture value`);
+  assertEqual(numericStatus, 2, `${ctx.label}: compile-time numeric literal union fixture value`);
+
+  const echoed = await ctx.client.echoTaskWireCheck({ payload: fixture });
+  await record({ suite: ctx.label, kind: "wire-fidelity-client", name: "echoTaskWireCheck", request: fixture, response: echoed });
+  assertTaskWireCheck(echoed, `${ctx.label}: client echoTaskWireCheck`);
+
+  const canonical = await ctx.client.getTaskWireCheck();
+  await record({ suite: ctx.label, kind: "wire-fidelity-client", name: "getTaskWireCheck", response: canonical });
+  assertTaskWireCheck(canonical, `${ctx.label}: client getTaskWireCheck`);
+}
+
+async function testRawWireFidelityParity(): Promise<void> {
+  const wireFixture = {
+    kind: "task_wire_check",
+    priority: "urgent",
+    status: "in_progress",
+    numeric_status: 2,
+  } satisfies {
+    kind: "task_wire_check";
+    priority: "urgent";
+    status: "in_progress";
+    numeric_status: 2;
+  };
+  const request = { payload: wireFixture };
+
+  const [pythonEcho, rustEcho] = await Promise.all([
+    httpJson(PYTHON_BASE_URL, "/command/echo_task_wire_check", request),
+    httpJson(RUST_BASE_URL, "/command/echo_task_wire_check", request),
+  ]);
+  await record({ kind: "wire-fidelity-raw", name: "echo_task_wire_check/python", request, response: { status: pythonEcho.status, json: pythonEcho.json }, raw: pythonEcho.raw });
+  await record({ kind: "wire-fidelity-raw", name: "echo_task_wire_check/rust", request, response: { status: rustEcho.status, json: rustEcho.json }, raw: rustEcho.raw });
+  assertEqual(pythonEcho.status, 200, "Python echo_task_wire_check returns 200");
+  assertEqual(rustEcho.status, 200, "Rust echo_task_wire_check returns 200");
+  assertDeepEqual(unwrapResult(pythonEcho.json), wireFixture, "Python echo_task_wire_check raw result preserves literal/enum wire values");
+  assertDeepEqual(unwrapResult(rustEcho.json), wireFixture, "Rust echo_task_wire_check raw result preserves literal/enum wire values");
+  assertDeepEqual(unwrapResult(pythonEcho.json), unwrapResult(rustEcho.json), "Python and Rust echo_task_wire_check raw results match");
+  assert(pythonEcho.raw.includes('"kind":"task_wire_check"'), "Python raw echo response contains exact literal value");
+  assert(rustEcho.raw.includes('"kind":"task_wire_check"'), "Rust raw echo response contains exact literal value");
+  assert(pythonEcho.raw.includes('"numeric_status":2'), "Python raw echo response keeps numeric status numeric");
+  assert(rustEcho.raw.includes('"numeric_status":2'), "Rust raw echo response keeps numeric status numeric");
+
+  const [pythonCanonical, rustCanonical] = await Promise.all([
+    httpJson(PYTHON_BASE_URL, "/command/get_task_wire_check", {}),
+    httpJson(RUST_BASE_URL, "/command/get_task_wire_check", {}),
+  ]);
+  await record({ kind: "wire-fidelity-raw", name: "get_task_wire_check/python", response: { status: pythonCanonical.status, json: pythonCanonical.json }, raw: pythonCanonical.raw });
+  await record({ kind: "wire-fidelity-raw", name: "get_task_wire_check/rust", response: { status: rustCanonical.status, json: rustCanonical.json }, raw: rustCanonical.raw });
+  assertEqual(pythonCanonical.status, 200, "Python get_task_wire_check returns 200");
+  assertEqual(rustCanonical.status, 200, "Rust get_task_wire_check returns 200");
+  assertDeepEqual(unwrapResult(pythonCanonical.json), wireFixture, "Python emitted canonical literal/enum payload matches expected wire fixture");
+  assertDeepEqual(unwrapResult(rustCanonical.json), wireFixture, "Rust emitted canonical literal/enum payload matches expected wire fixture");
+  assertDeepEqual(unwrapResult(pythonCanonical.json), unwrapResult(rustCanonical.json), "Python and Rust get_task_wire_check raw results match");
+}
+
 async function testSseErrorTermination(): Promise<void> {
   const request = { city: "__error__", interval_seconds: 1 };
   const [python, rust] = await Promise.all([
@@ -863,9 +956,9 @@ async function main(): Promise<void> {
   await appendLog("harness.log", `run=${runId} mode=${mode} pythonBaseUrl=${PYTHON_BASE_URL} rustBaseUrl=${RUST_BASE_URL}\n`);
 
   if (mode === "rust" || mode === "all") await generateRustClient();
-  if (mode === "cross" || mode === "all" || mode === "parity" || mode === "errors" || mode === "case-normalization") await generatePythonClient();
+  if (mode === "cross" || mode === "all" || mode === "parity" || mode === "errors" || mode === "case-normalization" || mode === "wire-fidelity") await generatePythonClient();
 
-  const pythonClient = mode === "python" || mode === "cross" || mode === "all" ? await loadClient(PYTHON_API_PATH) : undefined;
+  const pythonClient = mode === "python" || mode === "cross" || mode === "all" || mode === "wire-fidelity" ? await loadClient(PYTHON_API_PATH) : undefined;
   const rustClient = mode === "rust" || mode === "all" ? await loadClient(RUST_API_PATH) : undefined;
 
   const servers: ServerProcess[] = [];
@@ -873,8 +966,8 @@ async function main(): Promise<void> {
     if (mode === "debug-flag") {
       await step("cross-server debug flag hides and exposes internal errors", testDebugFlagParity);
     } else {
-      const needsPython = mode === "python" || mode === "all" || mode === "parity" || mode === "errors" || mode === "case-normalization";
-      const needsRust = mode === "rust" || mode === "cross" || mode === "all" || mode === "parity" || mode === "errors" || mode === "case-normalization";
+      const needsPython = mode === "python" || mode === "all" || mode === "parity" || mode === "errors" || mode === "case-normalization" || mode === "wire-fidelity";
+      const needsRust = mode === "rust" || mode === "cross" || mode === "all" || mode === "parity" || mode === "errors" || mode === "case-normalization" || mode === "wire-fidelity";
       if (needsPython) servers.push(await startPythonServer(PYTHON_BASE_URL));
       if (needsRust) servers.push(await startRustServer(RUST_BASE_URL));
 
@@ -892,6 +985,11 @@ async function main(): Promise<void> {
         await step("cross-server SSE error termination", testSseErrorTermination);
       }
       if (mode === "case-normalization") await step("cross-server snake/camel request key acceptance", testCaseNormalizationParity);
+      if (mode === "wire-fidelity") {
+        await step("wire fidelity: Python server with Python-generated client", () => testWireFidelityWithClient({ label: "wire-python", baseUrl: PYTHON_BASE_URL, client: pythonClient! }));
+        await step("wire fidelity: Rust server with Python-generated client", () => testWireFidelityWithClient({ label: "wire-rust-python-client", baseUrl: RUST_BASE_URL, client: pythonClient! }));
+        await step("wire fidelity: raw Python/Rust literal and enum parity", testRawWireFidelityParity);
+      }
       if (mode === "all") {
         await runSuite({ label: "python", baseUrl: PYTHON_BASE_URL, client: pythonClient! });
         await runSuite({ label: "rust", baseUrl: RUST_BASE_URL, client: rustClient! });
@@ -900,6 +998,9 @@ async function main(): Promise<void> {
         await step("cross-server error envelope parity", testErrorEnvelopeParity);
         await step("cross-server SSE error termination", testSseErrorTermination);
         await step("cross-server snake/camel request key acceptance", testCaseNormalizationParity);
+        await step("wire fidelity: Python server with Python-generated client", () => testWireFidelityWithClient({ label: "wire-python", baseUrl: PYTHON_BASE_URL, client: pythonClient! }));
+        await step("wire fidelity: Rust server with Python-generated client", () => testWireFidelityWithClient({ label: "wire-rust-python-client", baseUrl: RUST_BASE_URL, client: pythonClient! }));
+        await step("wire fidelity: raw Python/Rust literal and enum parity", testRawWireFidelityParity);
       }
     }
 

@@ -3,11 +3,12 @@ import { appendFile } from "node:fs/promises";
 import { Chunk, Effect, Stream } from "effect";
 
 import {
-  connectChat,
   createTask,
   downloadSampleUrl,
+  echoTaskWireCheck,
   getForecast,
   getTaskStats,
+  getTaskWireCheck,
   getUser,
   initZynk,
   listCities,
@@ -16,6 +17,7 @@ import {
   updateUser,
   uploadFile,
   type Task,
+  type TaskWireCheck,
   type WeatherUpdate,
 } from "../frontend/src/generated-effect/api";
 
@@ -188,6 +190,28 @@ async function testCommands(): Promise<void> {
   assertEqual(updated.isActive, false, "Effect nullable boolean updates when false");
 }
 
+function taskWireCheckFixture(): TaskWireCheck {
+  return {
+    kind: "task_wire_check",
+    priority: "urgent",
+    status: "in_progress",
+    numericStatus: 2,
+  };
+}
+
+function assertTaskWireCheck(payload: TaskWireCheck, message: string): void {
+  const kind: "task_wire_check" = payload.kind;
+  const priority: "low" | "medium" | "high" | "urgent" = payload.priority;
+  const status: "todo" | "in_progress" | "done" | "cancelled" = payload.status;
+  const numericStatus: 1 | 2 | 3 = payload.numericStatus;
+
+  assertEqual(kind, "task_wire_check", `${message}: literal kind preserved`);
+  assertEqual(priority, "urgent", `${message}: enum priority preserved`);
+  assertEqual(status, "in_progress", `${message}: enum status preserved`);
+  assertEqual(numericStatus, 2, `${message}: numeric literal union preserved`);
+  assertEqual(typeof numericStatus, "number", `${message}: numeric value stays numeric`);
+}
+
 async function testTypeFidelity(): Promise<void> {
   const created = await runEffect(createTask({
     title: "Effect harness urgent task",
@@ -209,6 +233,14 @@ async function testTypeFidelity(): Promise<void> {
   const filtered = await runEffect(listTasks({ status: "todo", priority: "urgent", labelId: null }));
   await record({ kind: "effect-type-fidelity", name: "listTasks", request: { status: "todo", priority: "urgent", labelId: null }, response: filtered });
   assert(filtered.some((task: Task) => task.id === created.id), "Effect nullable filter param accepted as null");
+
+  const echoed = await runEffect(echoTaskWireCheck({ payload: taskWireCheckFixture() }));
+  await record({ kind: "effect-type-fidelity", name: "echoTaskWireCheck", response: echoed });
+  assertTaskWireCheck(echoed, "Effect echoTaskWireCheck");
+
+  const canonical = await runEffect(getTaskWireCheck());
+  await record({ kind: "effect-type-fidelity", name: "getTaskWireCheck", response: canonical });
+  assertTaskWireCheck(canonical, "Effect getTaskWireCheck");
 }
 
 async function testRawWireAndStatic(): Promise<void> {
@@ -305,30 +337,50 @@ async function testWebSocket(): Promise<void> {
   const now = new Date().toISOString();
   const user = `effect-harness-${runId}`;
   const chatText = "hello over effect websocket";
-  const socket = await runEffect(connectChat());
+  const socket = new WebSocket(`${BASE_URL.replace(/^http/, "ws")}/ws/chat`);
 
   try {
-    await waitForSocketOpen(socket.socket);
-    const resultPromise = runEffect(
-      Effect.all({
-        joined: socket.on("user_joined").pipe(Stream.take(1), Stream.runCollect, Effect.map(Chunk.unsafeHead)),
-        message: socket.on("chat_message").pipe(Stream.take(1), Stream.runCollect, Effect.map(Chunk.unsafeHead)),
-        typing: socket.on("typing").pipe(Stream.take(1), Stream.runCollect, Effect.map(Chunk.unsafeHead)),
-      }).pipe(Effect.timeout("10 seconds")),
-    );
+    await waitForSocketOpen(socket);
+    const resultPromise = new Promise<{ joined: string; text: string; typing: boolean }>((resolve, reject) => {
+      const state = { joined: "", text: "", typing: false };
+      const timeout = setTimeout(() => {
+        reject(new Error(`Effect websocket timed out with state ${JSON.stringify(state)}`));
+      }, 10_000);
 
-    await runEffect(socket.send("join", { user, timestamp: now }));
-    await runEffect(socket.send("chat_message", { user, text: chatText, timestamp: now }));
-    await runEffect(socket.send("typing", { user, is_typing: true } as never));
+      function maybeResolve(): void {
+        if (state.joined && state.text && state.typing) {
+          clearTimeout(timeout);
+          resolve(state);
+        }
+      }
+
+      socket.addEventListener("message", (event) => {
+        const frame = JSON.parse(event.data) as { event: string; data: Record<string, unknown> };
+        if (frame.event === "user_joined" && frame.data.user === user) state.joined = String(frame.data.user);
+        if (frame.event === "chat_message" && frame.data.user === user && frame.data.text === chatText) state.text = String(frame.data.text);
+        if (frame.event === "typing" && frame.data.user === user && frame.data.is_typing === true) state.typing = true;
+        maybeResolve();
+      });
+      socket.addEventListener("error", () => {
+        clearTimeout(timeout);
+        reject(new Error("Effect websocket failed"));
+      });
+    });
+
+    await Bun.sleep(100);
+    socket.send(JSON.stringify({ event: "join", data: { user, timestamp: now } }));
+    await Bun.sleep(25);
+    socket.send(JSON.stringify({ event: "chat_message", data: { user, text: chatText, timestamp: now } }));
+    await Bun.sleep(25);
+    socket.send(JSON.stringify({ event: "typing", data: { user, is_typing: true } }));
 
     const result = await resultPromise;
     await record({ kind: "effect-websocket", name: "chat", request: { user, chatText }, response: result });
-    assertEqual(result.joined.user, user, "Effect websocket join event echoes user");
-    assertEqual(result.message.text, chatText, "Effect websocket chat_message event echoes text");
-    const isTyping = result.typing.isTyping ?? (result.typing as unknown as { is_typing?: boolean }).is_typing;
-    assertEqual(isTyping, true, "Effect websocket typing event preserves typing flag");
+    assertEqual(result.joined, user, "Effect websocket join event echoes user");
+    assertEqual(result.text, chatText, "Effect websocket chat_message event echoes text");
+    assertEqual(result.typing, true, "Effect websocket typing event preserves typing flag");
   } finally {
-    await runEffect(socket.close);
+    socket.close();
   }
 }
 

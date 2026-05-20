@@ -103,10 +103,12 @@ async fn smoke_covers_command_channel_upload_static_and_websocket() {
 fn dump_schema_contains_python_endpoint_and_type_sets() {
     let graph: zynk_schema::ApiGraph =
         serde_json::from_str(&rust_axum_kitchen_sink::dump_schema_json()).expect("schema json");
-    assert_eq!(graph.endpoints.len(), 26);
+    assert_eq!(graph.endpoints.len(), 28);
     for name in [
         "get_user",
         "list_users",
+        "echo_task_wire_check",
+        "get_task_wire_check",
         "stream_weather",
         "upload_file",
         "download_sample",
@@ -118,7 +120,23 @@ fn dump_schema_contains_python_endpoint_and_type_sets() {
         );
     }
     assert!(graph.models.contains_key("Task"));
+    assert!(graph.models.contains_key("TaskWireCheck"));
     assert!(graph.models.contains_key("WeatherUpdate"));
+    let wire_check = &graph.models["TaskWireCheck"];
+    assert_eq!(
+        wire_check.fields[0].ty.value,
+        Some(json!("task_wire_check"))
+    );
+    assert_eq!(wire_check.fields[3].wire_name, "numericStatus");
+    assert_eq!(
+        wire_check.fields[3]
+            .ty
+            .inner
+            .iter()
+            .map(|ty| ty.value.clone())
+            .collect::<Vec<_>>(),
+        vec![Some(json!(1)), Some(json!(2)), Some(json!(3))]
+    );
     assert_eq!(
         graph.enums["TaskPriority"].values,
         vec![

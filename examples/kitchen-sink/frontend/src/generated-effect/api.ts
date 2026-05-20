@@ -121,6 +121,15 @@ export const TaskStats = Schema.Struct({
 
 export type TaskStats = Schema.Schema.Type<typeof TaskStats>
 
+export const TaskWireCheck = Schema.Struct({
+  kind: Schema.Literal("task_wire_check"),
+  priority: Schema.Literal("low", "medium", "high", "urgent"),
+  status: Schema.Literal("todo", "in_progress", "done", "cancelled"),
+  numericStatus: Schema.propertySignature(Schema.Literal(1, 2, 3)).pipe(Schema.fromKey("numeric_status"))
+})
+
+export type TaskWireCheck = Schema.Schema.Type<typeof TaskWireCheck>
+
 export const TypingIndicator = Schema.Struct({
   user: Schema.String,
   isTyping: Schema.propertySignature(Schema.Boolean).pipe(Schema.fromKey("is_typing"))
@@ -217,6 +226,12 @@ export const deleteUser = (args: { userId: number }, options?: CallOptions): Eff
   callCommand("delete_user", { user_id: args.userId }, Schema.Boolean, options)
 
 /**
+ * Echo a literal and enum payload without coercing wire values.
+ */
+export const echoTaskWireCheck = (args: { payload: TaskWireCheck }, options?: CallOptions): Effect.Effect<TaskWireCheck, ZynkError, ZynkClient> =>
+  callCommand("echo_task_wire_check", { payload: args.payload }, TaskWireCheck, options)
+
+/**
  * Get weather forecast for a city.
  * 
  * Returns a list of forecasts for the specified number of days.
@@ -235,6 +250,12 @@ export const getTask = (args: { taskId: number }, options?: CallOptions): Effect
  */
 export const getTaskStats = (options?: CallOptions): Effect.Effect<TaskStats, ZynkError, ZynkClient> =>
   callCommand("get_task_stats", {}, TaskStats, options)
+
+/**
+ * Return a canonical literal and enum payload.
+ */
+export const getTaskWireCheck = (options?: CallOptions): Effect.Effect<TaskWireCheck, ZynkError, ZynkClient> =>
+  callCommand("get_task_wire_check", {}, TaskWireCheck, options)
 
 /**
  * Get a user by ID.
