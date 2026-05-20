@@ -93,6 +93,34 @@ MACROS_ALLOWED_DEPS = {
     "zynk-runtime",
 }
 
+AXUM_ALLOWED_DEPS = {
+    "axum",
+    "bytes",
+    "futures",
+    "http-body-util",
+    "serde_json",
+    "tokio",
+    "tower",
+    "tower-http",
+    "zynk-runtime",
+}
+
+AXUM_FORBIDDEN_DEPS = {
+    "actix",
+    "actix-web",
+    "hyper",
+    "poem",
+    "reqwest",
+    "rocket",
+    "salvo",
+    "tonic",
+    "warp",
+    "zynk-cli",
+    "zynk-codegen",
+    "zynk-gen-effect",
+    "zynk-gen-ts",
+}
+
 MACROS_FORBIDDEN_DEPS = {
     "actix",
     "actix-web",
@@ -253,6 +281,21 @@ def main() -> int:
                         f"{relative_path}: zynk-cli may not depend on "
                         f"'{dependency}' in [{section}]; it must stay free of HTTP "
                         "frameworks and server-binding crates"
+                    )
+
+        if crate_name == "zynk-axum":
+            for section, dependency, _value in dependency_entries:
+                if dependency in AXUM_FORBIDDEN_DEPS:
+                    violations.append(
+                        f"{relative_path}: zynk-axum may not depend on "
+                        f"'{dependency}' in [{section}]; it must stay free of "
+                        "generators, codegen, CLI, and unrelated HTTP frameworks"
+                    )
+                if dependency not in AXUM_ALLOWED_DEPS:
+                    violations.append(
+                        f"{relative_path}: zynk-axum dependency '{dependency}' in "
+                        f"[{section}] is not in the allowed set "
+                        f"{sorted(AXUM_ALLOWED_DEPS)}"
                     )
 
         if crate_name == "zynk-macros":

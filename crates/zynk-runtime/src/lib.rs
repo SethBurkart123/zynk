@@ -11,7 +11,7 @@ use thiserror::Error;
 use zynk_schema::{TypeKind, TypeRef};
 
 pub use inventory;
-pub use zynk_schema::EndpointKind;
+pub use zynk_schema::{self, EndpointKind};
 
 /// Request validation failed.
 pub const VALIDATION_ERROR: &str = "VALIDATION_ERROR";
