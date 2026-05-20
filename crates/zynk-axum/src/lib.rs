@@ -1277,7 +1277,14 @@ async fn command_route(
         Ok(Ok(value)) => (StatusCode::OK, Json(JsonResultEnvelope::new(value))).into_response(),
         Ok(Err(error)) => {
             let status = status_for_error(error.code);
-            error_response(status, error.into_envelope())
+            if error.code == INTERNAL_ERROR && !state.debug {
+                error_response(
+                    status,
+                    JsonErrorEnvelope::new(INTERNAL_ERROR, "An internal error occurred"),
+                )
+            } else {
+                error_response(status, error.into_envelope())
+            }
         }
         Err(panic) => {
             let message = if state.debug {
@@ -1346,7 +1353,7 @@ fn upload_not_found_response(name: &str) -> Response {
             UPLOAD_HANDLER_NOT_FOUND,
             format!("Upload handler '{name}' not found"),
         )
-        .with_details(json!({ "upload": name })),
+        .with_details(json!({ "handler": name })),
     )
 }
 
@@ -1357,7 +1364,7 @@ fn static_not_found_response(name: &str) -> Response {
             STATIC_HANDLER_NOT_FOUND,
             format!("Static handler '{name}' not found"),
         )
-        .with_details(json!({ "static": name })),
+        .with_details(json!({ "handler": name })),
     )
 }
 

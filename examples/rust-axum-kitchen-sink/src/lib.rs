@@ -12,7 +12,7 @@ use uuid::Uuid;
 use zynk_axum::{Channel, StaticFile, UploadFile, WebSocket, ZynkBridge};
 use zynk_runtime::{
     EndpointKind, EndpointMeta, HandlerKey, ParamMeta, TypeRefStatic, ZynkError, EXECUTION_ERROR,
-    VALIDATION_ERROR,
+    INTERNAL_ERROR, VALIDATION_ERROR,
 };
 use zynk_schema::{ApiGraph, EnumDef, Field, ModelDef, TypeRef};
 
@@ -935,6 +935,21 @@ async fn stream_weather_handler(payload: Value, channel: Channel) -> Result<(), 
         channel.send(json!("hello"))?;
         return Ok(());
     }
+    if city == "__error__" {
+        channel.send(to_value(WeatherUpdate {
+            timestamp: "2024-01-01T00:00:00".to_string(),
+            city: "Tokyo".to_string(),
+            temperature: 19.5,
+            conditions: "Sunny".to_string(),
+        })?)?;
+        channel.send(to_value(WeatherUpdate {
+            timestamp: "2024-01-01T00:00:01".to_string(),
+            city: "Tokyo".to_string(),
+            temperature: 20.5,
+            conditions: "Cloudy".to_string(),
+        })?)?;
+        return Err(ZynkError::new(EXECUTION_ERROR, "boom"));
+    }
     let update = WeatherUpdate {
         timestamp: now_iso(),
         city: city.clone(),
@@ -981,6 +996,9 @@ async fn chat_handler(payload: Value, socket: WebSocket) -> Result<(), ZynkError
     match event {
         "join" => {
             let joined: UserJoined = typed_payload(data.clone())?;
+            if joined.user == "__panic__" {
+                return Err(ZynkError::new(INTERNAL_ERROR, "super secret stack info"));
+            }
             let (connected_users, uptime_seconds) = {
                 let state = state();
                 let mut guard = state.lock().map_err(|_| state_error())?;
@@ -1029,6 +1047,9 @@ async fn chat_handler(payload: Value, socket: WebSocket) -> Result<(), ZynkError
         }
         "chat_message" => {
             let message: ChatMessage = typed_payload(data)?;
+            if message.text == "__panic__" {
+                return Err(ZynkError::new(INTERNAL_ERROR, "super secret stack info"));
+            }
             socket
                 .send(
                     "chat_message",
@@ -1068,12 +1089,13 @@ fn bridge_with_handlers() -> ZynkBridge {
                 let state = state();
                 let guard = state.lock().map_err(|_| state_error())?;
                 let id = get_i64(&payload, "user_id", "userId")?;
-                to_value(guard.users.get(&id).cloned().unwrap_or(User {
-                    id,
-                    name: format!("User {id}"),
-                    email: format!("user{id}@example.com"),
-                    is_active: true,
-                }))
+                if id == -500 {
+                    return Err(ZynkError::new(INTERNAL_ERROR, "super secret stack info"));
+                }
+                let user = guard.users.get(&id).cloned().ok_or_else(|| {
+                    ZynkError::new(EXECUTION_ERROR, format!("User with ID {id} not found"))
+                })?;
+                to_value(user)
             },
         )
         .register_handler(
@@ -1114,12 +1136,9 @@ fn bridge_with_handlers() -> ZynkBridge {
                 let id = get_i64(&payload, "user_id", "userId")?;
                 let state = state();
                 let mut guard = state.lock().map_err(|_| state_error())?;
-                let mut user = guard.users.get(&id).cloned().unwrap_or(User {
-                    id,
-                    name: format!("User {id}"),
-                    email: format!("user{id}@example.com"),
-                    is_active: true,
-                });
+                let mut user = guard.users.get(&id).cloned().ok_or_else(|| {
+                    ZynkError::new(EXECUTION_ERROR, format!("User with ID {id} not found"))
+                })?;
                 if let Some(name) = optional_string(&payload, "name", "name") {
                     user.name = name;
                 }
@@ -1169,17 +1188,10 @@ fn bridge_with_handlers() -> ZynkBridge {
                 let id = get_i64(&payload, "task_id", "taskId")?;
                 let state = state();
                 let guard = state.lock().map_err(|_| state_error())?;
-                to_value(guard.tasks.get(&id).cloned().unwrap_or(Task {
-                    id,
-                    title: format!("Task {id}"),
-                    description: None,
-                    priority: TaskPriority::Medium,
-                    status: TaskStatus::Todo,
-                    labels: vec![],
-                    created_at: now_iso(),
-                    due_date: None,
-                    assigned_to: None,
-                }))
+                let task = guard.tasks.get(&id).cloned().ok_or_else(|| {
+                    ZynkError::new(EXECUTION_ERROR, format!("Task with ID {id} not found"))
+                })?;
+                to_value(task)
             },
         )
         .register_handler(
@@ -1242,22 +1254,15 @@ fn bridge_with_handlers() -> ZynkBridge {
             HandlerKey("rust_axum_kitchen_sink::update_task_status"),
             |payload: Value| {
                 let id = get_i64(&payload, "task_id", "taskId")?;
-                let status = get_string(&payload, "status", "status")?
-                    .parse()
-                    .unwrap_or(TaskStatus::Todo);
+                let status_value = get_string(&payload, "status", "status")?;
+                let status = status_value.parse().map_err(|_| {
+                    ZynkError::new(EXECUTION_ERROR, format!("Invalid status: {status_value}"))
+                })?;
                 let state = state();
                 let mut guard = state.lock().map_err(|_| state_error())?;
-                let mut task = guard.tasks.get(&id).cloned().unwrap_or(Task {
-                    id,
-                    title: format!("Task {id}"),
-                    description: None,
-                    priority: TaskPriority::Medium,
-                    status: TaskStatus::Todo,
-                    labels: vec![],
-                    created_at: now_iso(),
-                    due_date: None,
-                    assigned_to: None,
-                });
+                let mut task = guard.tasks.get(&id).cloned().ok_or_else(|| {
+                    ZynkError::new(EXECUTION_ERROR, format!("Task with ID {id} not found"))
+                })?;
                 task.status = status;
                 guard.tasks.insert(id, task.clone());
                 to_value(task)
@@ -2232,8 +2237,16 @@ pub fn bridge() -> ZynkBridge {
     bridge_with_handlers()
 }
 
+pub fn bridge_with_debug(debug: bool) -> ZynkBridge {
+    bridge_with_handlers().debug(debug)
+}
+
 pub fn router() -> Router {
-    bridge().configure(Router::new())
+    bridge_with_debug(false).configure(Router::new())
+}
+
+pub fn router_with_debug(debug: bool) -> Router {
+    bridge_with_debug(debug).configure(Router::new())
 }
 
 pub fn dump_schema_json() -> String {

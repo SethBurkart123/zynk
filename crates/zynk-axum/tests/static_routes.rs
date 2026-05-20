@@ -215,7 +215,7 @@ async fn static_route_unknown_or_non_static_returns_static_not_found() {
     let body: Value = serde_json::from_slice(&body).expect("json error body");
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["code"], "STATIC_HANDLER_NOT_FOUND");
-    assert_eq!(body["details"], json!({"static": "missing_axum"}));
+    assert_eq!(body["details"], json!({"handler": "missing_axum"}));
 
     let response = request(router, Method::GET, "/static/rpc_not_static_axum").await;
     let (status, _headers, body) = body_bytes(response).await;

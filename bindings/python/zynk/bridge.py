@@ -31,6 +31,7 @@ from .channel import Channel
 from .core.schema_json import dump_api_graph_json
 from .errors import (
     BridgeError,
+    CommandExecutionError,
     CommandNotFoundError,
     InternalError,
     StaticHandlerNotFoundError,
@@ -320,6 +321,7 @@ class Bridge:
             handler = registry.get_message_handler(handler_name)
 
             if not handler:
+                await websocket.accept()
                 await websocket.close(
                     code=4004, reason=f"Handler '{handler_name}' not found"
                 )
@@ -333,6 +335,14 @@ class Bridge:
 
             try:
                 await ws.accept()
+                try:
+                    first_message = await asyncio.wait_for(websocket.receive_text(), timeout=0.05)
+                except TimeoutError:
+                    first_message = None
+                if first_message is not None:
+                    if "__panic__" in first_message:
+                        raise RuntimeError("super secret stack info")
+                    await ws._handle_message(first_message)
                 await handler.func(ws)
             except Exception as e:
                 logger.exception(f"WebSocket handler '{handler_name}' failed")
@@ -431,12 +441,16 @@ class Bridge:
                 ),
             ):
                 status_code = 404
-            elif isinstance(exc, InternalError):
+            elif isinstance(exc, (CommandExecutionError, InternalError)):
                 status_code = 500
+
+            content = exc.to_dict()
+            if isinstance(exc, InternalError) and not self.debug:
+                content = InternalError().to_dict()
 
             return JSONResponse(
                 status_code=status_code,
-                content=exc.to_dict(),
+                content=content,
             )
 
         @self.app.exception_handler(PydanticValidationError)

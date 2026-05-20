@@ -8,6 +8,9 @@
     "test:cross": "bun run index.ts --mode=cross",
     "test:all": "bun run index.ts --mode=all",
     "test:parity": "bun run index.ts --mode=parity",
+    "test:errors": "bun run index.ts --mode=errors",
+    "test:debug-flag": "bun run index.ts --mode=debug-flag",
+    "test:case-normalization": "bun run index.ts --mode=case-normalization",
     "test:effect": "bun run effect.ts",
     "typecheck": "bun x tsc --noEmit"
   },

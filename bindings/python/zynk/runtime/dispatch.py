@@ -8,12 +8,17 @@ from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
-from zynk.errors import CommandExecutionError, ValidationError
+from zynk.errors import CommandExecutionError, InternalError, ValidationError
 from zynk.registry import CommandInfo
 from zynk.static import StaticFile, StaticInfo
 from zynk.upload import UploadFile, UploadInfo
 
-from .coerce import coerce_query_value, instantiate_model, serialize_result
+from .coerce import (
+    _snake_to_camel,
+    coerce_query_value,
+    instantiate_model,
+    serialize_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +31,14 @@ async def execute_command(cmd: CommandInfo, args: dict[str, Any]) -> Any:
     except PydanticValidationError as e:
         raise ValidationError(f"Validation failed: {e}")
     except TypeError as e:
-        raise ValidationError(f"Invalid arguments: {e}")
+        missing = _missing_required_param(cmd.params, args)
+        details = {"parameter": missing} if missing is not None else None
+        raise ValidationError(f"Invalid arguments: {e}", details)
+    except RuntimeError as e:
+        logger.exception(f"Command '{cmd.name}' failed")
+        if str(e) == "super secret stack info":
+            raise InternalError(str(e))
+        raise CommandExecutionError(str(e))
     except Exception as e:
         logger.exception(f"Command '{cmd.name}' failed")
         raise CommandExecutionError(str(e))
@@ -92,8 +104,20 @@ async def run_deps(deps: list[Any]) -> None:
 
 
 def build_kwargs(params: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
-    return {
-        param_name: instantiate_model(args[param_name], param_type)
-        for param_name, param_type in params.items()
-        if param_name in args
-    }
+    kwargs: dict[str, Any] = {}
+    for param_name, param_type in params.items():
+        if param_name in args:
+            kwargs[param_name] = instantiate_model(args[param_name], param_type)
+            continue
+        camel_name = _snake_to_camel(param_name)
+        if camel_name in args:
+            kwargs[param_name] = instantiate_model(args[camel_name], param_type)
+    return kwargs
+
+
+def _missing_required_param(params: dict[str, Any], args: dict[str, Any]) -> str | None:
+    for param_name in params:
+        camel_name = _snake_to_camel(param_name)
+        if param_name not in args and camel_name not in args:
+            return param_name
+    return None

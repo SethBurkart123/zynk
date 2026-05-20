@@ -17,6 +17,11 @@ def _camel_to_snake(name: str) -> str:
     return "".join(out)
 
 
+def _snake_to_camel(name: str) -> str:
+    parts = name.split("_")
+    return parts[0] + "".join(part.title() for part in parts[1:])
+
+
 def instantiate_model(data: Any, type_hint: Any) -> Any:
     if data is None:
         return None

@@ -226,8 +226,8 @@ class WebSocket(Generic[ServerEvents, ClientEvents]):
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON message: {e}")
-        except Exception as e:
-            logger.exception(f"Error handling WebSocket message: {e}")
+        except Exception:
+            raise
 
     async def listen(self) -> None:
         """
@@ -247,9 +247,8 @@ class WebSocket(Generic[ServerEvents, ClientEvents]):
                 except WebSocketDisconnect:
                     logger.debug("WebSocket client disconnected")
                     break
-                except Exception as e:
-                    logger.exception(f"WebSocket error: {e}")
-                    break
+                except Exception:
+                    raise
         finally:
             self._status = WebSocketStatus.DISCONNECTED
             self._closed_event.set()

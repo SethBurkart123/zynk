@@ -54,11 +54,13 @@ const testResults: { name: string; status: "PASS" | "FAIL"; detail?: string }[] 
 
 await Bun.$`mkdir -p ${LOG_DIR}`;
 
-function parseMode(): "python" | "rust" | "cross" | "all" | "parity" {
+type HarnessMode = "python" | "rust" | "cross" | "all" | "parity" | "errors" | "debug-flag" | "case-normalization";
+
+function parseMode(): HarnessMode {
   const arg = Bun.argv.slice(2).find((value) => value.startsWith("--mode="));
-  const value = (arg?.split("=", 2)[1] ?? process.env.ZYNK_HARNESS_MODE ?? "python") as "python" | "rust" | "cross" | "all" | "parity";
-  if (!["python", "rust", "cross", "all", "parity"].includes(value)) {
-    throw new Error(`Unknown harness mode ${value}; expected python, rust, cross, all, or parity`);
+  const value = (arg?.split("=", 2)[1] ?? process.env.ZYNK_HARNESS_MODE ?? "python") as HarnessMode;
+  if (!["python", "rust", "cross", "all", "parity", "errors", "debug-flag", "case-normalization"].includes(value)) {
+    throw new Error(`Unknown harness mode ${value}; expected python, rust, cross, all, parity, errors, debug-flag, or case-normalization`);
   }
   return value;
 }
@@ -205,13 +207,14 @@ async function loadClient(apiPath: string): Promise<Client> {
   return (await import(`${href}?run=${runId}-${Math.random()}`)) as Client;
 }
 
-async function startPythonServer(baseUrl: string): Promise<ServerProcess> {
-  const proc = Bun.spawn(["uv", "run", "python", "-c", "import main; main.app.port = int(__import__('os').environ['PORT']); main.app.run(dev=False)"], {
+async function startPythonServer(baseUrl: string, debug = false): Promise<ServerProcess> {
+  const proc = Bun.spawn(["uv", "run", "python", "-c", "import main; main.app.port = int(__import__('os').environ['PORT']); main.app.debug = __import__('os').environ.get('ZYNK_DEBUG') == '1'; main.app.run(dev=False)"], {
     cwd: BACKEND_DIR,
     env: {
       ...process.env,
       PORT: portOf(baseUrl),
       ZYNK_DEV: "0",
+      ZYNK_DEBUG: debug ? "1" : "0",
       PYTHONUNBUFFERED: "1",
       PYTHONPATH: `${ROOT}/bindings/python${process.env.PYTHONPATH ? `:${process.env.PYTHONPATH}` : ""}`,
     },
@@ -224,8 +227,10 @@ async function startPythonServer(baseUrl: string): Promise<ServerProcess> {
   return { name: "python", proc, stdout, stderr };
 }
 
-async function startRustServer(baseUrl: string): Promise<ServerProcess> {
-  const proc = Bun.spawn(["cargo", "run", "--release", "--bin", "rust-axum-kitchen-sink", "--", "--port", portOf(baseUrl)], {
+async function startRustServer(baseUrl: string, debug = false): Promise<ServerProcess> {
+  const args = ["cargo", "run", "--release", "--bin", "rust-axum-kitchen-sink", "--", "--port", portOf(baseUrl)];
+  if (debug) args.push("--debug");
+  const proc = Bun.spawn(args, {
     cwd: `${ROOT}/examples/rust-axum-kitchen-sink`,
     env: process.env,
     stdout: "pipe",
@@ -270,16 +275,22 @@ async function waitForHealth(baseUrl: string, suite: string): Promise<void> {
   throw new Error(`Backend healthcheck failed for ${baseUrl}: ${lastError}`);
 }
 
-async function rawJson(ctx: SuiteContext, path: string, body: unknown): Promise<unknown> {
-  const response = await fetch(`${ctx.baseUrl}${path}`, {
-    method: "POST",
+async function httpJson(baseUrl: string, path: string, body: unknown, method = "POST"): Promise<{ status: number; json: unknown; raw: string }> {
+  const init: RequestInit = {
+    method,
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  await record({ suite: ctx.label, kind: "raw-http", name: path, request: body, raw: text });
-  assert(response.ok, `${path} failed with HTTP ${response.status}: ${text}`);
-  return JSON.parse(text);
+  };
+  if (method !== "GET" && method !== "HEAD") init.body = JSON.stringify(body);
+  const response = await fetch(`${baseUrl}${path}`, init);
+  const raw = await response.text();
+  return { status: response.status, json: raw ? JSON.parse(raw) : null, raw };
+}
+
+async function rawJson(ctx: SuiteContext, path: string, body: unknown): Promise<unknown> {
+  const { status, json, raw } = await httpJson(ctx.baseUrl, path, body);
+  await record({ suite: ctx.label, kind: "raw-http", name: path, request: body, raw });
+  assert(status >= 200 && status < 300, `${path} failed with HTTP ${status}: ${raw}`);
+  return json;
 }
 
 async function testCommands(ctx: SuiteContext): Promise<void> {
@@ -475,6 +486,183 @@ function stableUploadResult(payload: unknown): unknown {
 function stableUploadError(payload: unknown): unknown {
   const error = payload as { code?: string; details?: unknown };
   return { code: error.code, details: error.details };
+}
+
+function errorPayload(json: unknown): { code?: string; message?: string; details?: unknown } {
+  const payload = json as { code?: string; message?: string; details?: unknown; error?: { code?: string; message?: string; details?: unknown } };
+  return payload.error ?? payload;
+}
+
+function stableErrorEnvelope(json: unknown): unknown {
+  const error = errorPayload(json);
+  const envelope: Record<string, unknown> = { code: error.code };
+  if (error.details !== undefined) envelope.details = error.details;
+  return envelope;
+}
+
+function assertErrorShape(json: unknown, label: string): void {
+  const error = errorPayload(json);
+  assert(error && typeof error === "object", `${label} error response is an object`);
+  assert(typeof error.code === "string", `${label} error code is present`);
+  assert(typeof error.message === "string", `${label} error message is present`);
+  const keys = Object.keys(error).sort();
+  assert(keys.every((key) => ["code", "details", "message"].includes(key)), `${label} has only code/message/details keys: ${keys.join(",")}`);
+}
+
+async function assertParityHttpError(name: string, path: string, body: unknown, expectedStatus: number, expectedCode: string, method = "POST"): Promise<void> {
+  const [python, rust] = await Promise.all([
+    httpJson(PYTHON_BASE_URL, path, body, method),
+    httpJson(RUST_BASE_URL, path, body, method),
+  ]);
+  await record({ kind: "error-parity", name: `${name}/python`, request: { path, body }, response: { status: python.status, json: python.json }, raw: python.raw });
+  await record({ kind: "error-parity", name: `${name}/rust`, request: { path, body }, response: { status: rust.status, json: rust.json }, raw: rust.raw });
+  assertEqual(python.status, expectedStatus, `${name}: Python HTTP status`);
+  assertEqual(rust.status, expectedStatus, `${name}: Rust HTTP status`);
+  assertErrorShape(python.json, `${name}: Python`);
+  assertErrorShape(rust.json, `${name}: Rust`);
+  assertEqual(errorPayload(python.json).code, expectedCode, `${name}: Python error code`);
+  assertEqual(errorPayload(rust.json).code, expectedCode, `${name}: Rust error code`);
+  assertDeepEqual(stableErrorEnvelope(python.json), stableErrorEnvelope(rust.json), `${name}: stable error envelope fields match`);
+}
+
+async function assertWebSocketClose(baseUrl: string, path: string, firstMessage?: unknown): Promise<{ code: number; reason: string }> {
+  const wsUrl = `${baseUrl.replace(/^http/, "ws")}${path}`;
+  return await new Promise((resolve, reject) => {
+    const socket = new WebSocket(wsUrl);
+    const timeout = setTimeout(() => {
+      socket.close();
+      reject(new Error(`websocket close timed out for ${wsUrl}`));
+    }, 10_000);
+    socket.onopen = () => {
+      if (firstMessage !== undefined) socket.send(JSON.stringify(firstMessage));
+    };
+    socket.onerror = () => {
+      // Some runtimes surface an immediate close after upgrade as an error before onclose.
+    };
+    socket.onclose = (event) => {
+      clearTimeout(timeout);
+      resolve({ code: event.code, reason: event.reason });
+    };
+  });
+}
+
+async function testDebugFlagParity(): Promise<void> {
+  const defaultServers = [await startPythonServer(PYTHON_BASE_URL, false), await startRustServer(RUST_BASE_URL, false)];
+  try {
+    await Promise.all([waitForHealth(PYTHON_BASE_URL, "python-debug-default"), waitForHealth(RUST_BASE_URL, "rust-debug-default")]);
+    const [pythonDefault, rustDefault] = await Promise.all([
+      httpJson(PYTHON_BASE_URL, "/command/get_user", { user_id: -500 }),
+      httpJson(RUST_BASE_URL, "/command/get_user", { user_id: -500 }),
+    ]);
+    await record({ kind: "debug-flag", name: "default/python", response: { status: pythonDefault.status, json: pythonDefault.json }, raw: pythonDefault.raw });
+    await record({ kind: "debug-flag", name: "default/rust", response: { status: rustDefault.status, json: rustDefault.json }, raw: rustDefault.raw });
+    assertEqual(errorPayload(pythonDefault.json).message, "An internal error occurred", "Python debug=False hides exception text");
+    assertEqual(errorPayload(rustDefault.json).message, "An internal error occurred", "Rust debug=False hides exception text");
+  } finally {
+    await Promise.allSettled(defaultServers.reverse().map((server) => stopServer(server)));
+  }
+
+  const debugServers = [await startPythonServer(PYTHON_BASE_URL, true), await startRustServer(RUST_BASE_URL, true)];
+  try {
+    await Promise.all([waitForHealth(PYTHON_BASE_URL, "python-debug"), waitForHealth(RUST_BASE_URL, "rust-debug")]);
+    const [pythonDebug, rustDebug] = await Promise.all([
+      httpJson(PYTHON_BASE_URL, "/command/get_user", { user_id: -500 }),
+      httpJson(RUST_BASE_URL, "/command/get_user", { user_id: -500 }),
+    ]);
+    await record({ kind: "debug-flag", name: "enabled/python", response: { status: pythonDebug.status, json: pythonDebug.json }, raw: pythonDebug.raw });
+    await record({ kind: "debug-flag", name: "enabled/rust", response: { status: rustDebug.status, json: rustDebug.json }, raw: rustDebug.raw });
+    assertEqual(errorPayload(pythonDebug.json).message, "super secret stack info", "Python debug=True exposes str(e)");
+    assertEqual(errorPayload(rustDebug.json).message, "super secret stack info", "Rust debug=True exposes str(e)");
+  } finally {
+    await Promise.allSettled(debugServers.reverse().map((server) => stopServer(server)));
+  }
+}
+
+async function testCaseNormalizationParity(): Promise<void> {
+  const cases = [
+    { name: "get_user snake_case", path: "/command/get_user", body: { user_id: 1 } },
+    { name: "get_user camelCase", path: "/command/get_user", body: { userId: 1 } },
+    { name: "create_task snake_case", path: "/command/create_task", body: { title: "snake case task", description: null, priority: "urgent", due_date: null, label_ids: [1, 2] } },
+    { name: "create_task camelCase", path: "/command/create_task", body: { title: "camel case task", description: null, priority: "urgent", dueDate: null, labelIds: [1, 2] } },
+  ];
+  for (const item of cases) {
+    const [python, rust] = await Promise.all([
+      httpJson(PYTHON_BASE_URL, item.path, item.body),
+      httpJson(RUST_BASE_URL, item.path, item.body),
+    ]);
+    await record({ kind: "case-normalization", name: `${item.name}/python`, request: item.body, response: { status: python.status, json: python.json }, raw: python.raw });
+    await record({ kind: "case-normalization", name: `${item.name}/rust`, request: item.body, response: { status: rust.status, json: rust.json }, raw: rust.raw });
+    assertEqual(python.status, 200, `${item.name}: Python accepts request keys`);
+    assertEqual(rust.status, 200, `${item.name}: Rust accepts request keys`);
+    assert((python.json as { result?: unknown }).result !== undefined, `${item.name}: Python returns result envelope`);
+    assert((rust.json as { result?: unknown }).result !== undefined, `${item.name}: Rust returns result envelope`);
+  }
+}
+
+async function testSseErrorTermination(): Promise<void> {
+  const request = { city: "__error__", interval_seconds: 1 };
+  const [python, rust] = await Promise.all([
+    captureSse(PYTHON_BASE_URL, "stream_weather", request),
+    captureSse(RUST_BASE_URL, "stream_weather", request),
+  ]);
+  await record({ kind: "sse-error-termination", name: "stream_weather/python", request, raw: python.raw, response: python.frames });
+  await record({ kind: "sse-error-termination", name: "stream_weather/rust", request, raw: rust.raw, response: rust.frames });
+  for (const [label, stream] of [["Python", python], ["Rust", rust]] as const) {
+    assertEqual(stream.status, 200, `${label} SSE error stream starts with 200`);
+    assertDeepEqual(stream.frames.map((frame) => frame.event), ["message", "message", "error"], `${label} SSE terminates immediately after error frame`);
+    const errorFrame = stream.frames[2];
+    assertDeepEqual(errorFrame.data, { error: "boom" }, `${label} SSE error payload`);
+  }
+  assertDeepEqual(python.frames.map(normalizeSseFrame), rust.frames.map(normalizeSseFrame), "SSE error termination frame sequence matches across servers");
+}
+
+async function testErrorEnvelopeParity(): Promise<void> {
+  await assertParityHttpError("VALIDATION_ERROR", "/command/get_user", {}, 400, "VALIDATION_ERROR");
+  await assertParityHttpError("COMMAND_NOT_FOUND", "/command/does_not_exist", {}, 404, "COMMAND_NOT_FOUND");
+  await assertParityHttpError("EXECUTION_ERROR", "/command/get_user", { user_id: 999999 }, 500, "EXECUTION_ERROR");
+  await assertParityHttpError("INTERNAL_ERROR", "/command/get_user", { user_id: -500 }, 500, "INTERNAL_ERROR");
+  await assertParityHttpError("HANDLER_NOT_FOUND", "/command/does_not_exist", {}, 404, "COMMAND_NOT_FOUND");
+  await assertParityHttpError("UPLOAD_HANDLER_NOT_FOUND", "/upload/does_not_exist", {}, 404, "UPLOAD_HANDLER_NOT_FOUND");
+  await assertParityHttpError("STATIC_HANDLER_NOT_FOUND", "/static/does_not_exist", {}, 404, "STATIC_HANDLER_NOT_FOUND", "GET");
+
+  const badFile = new File([new Uint8Array(5 * 1024 * 1024 + 1)], "too-large.png", { type: "image/png" });
+  const [pythonUploadError, rustUploadError] = await Promise.all([
+    postUpload(PYTHON_BASE_URL, "upload_image", badFile, { generate_thumbnail: false }),
+    postUpload(RUST_BASE_URL, "upload_image", badFile, { generate_thumbnail: false }),
+  ]);
+  await record({ kind: "error-parity", name: "UPLOAD_VALIDATION_ERROR/python", response: { status: pythonUploadError.status, json: pythonUploadError.json }, raw: pythonUploadError.raw });
+  await record({ kind: "error-parity", name: "UPLOAD_VALIDATION_ERROR/rust", response: { status: rustUploadError.status, json: rustUploadError.json }, raw: rustUploadError.raw });
+  assertEqual(pythonUploadError.status, 400, "Python UPLOAD_VALIDATION_ERROR status");
+  assertEqual(rustUploadError.status, 400, "Rust UPLOAD_VALIDATION_ERROR status");
+  assertDeepEqual(stableErrorEnvelope(pythonUploadError.json), stableErrorEnvelope(rustUploadError.json), "UPLOAD_VALIDATION_ERROR envelopes match");
+
+  const [pythonChannel, rustChannel] = await Promise.all([
+    captureSse(PYTHON_BASE_URL, "stream_weather", { city: "__error__", interval_seconds: 1 }),
+    captureSse(RUST_BASE_URL, "stream_weather", { city: "__error__", interval_seconds: 1 }),
+  ]);
+  const pythonErrorFrame = pythonChannel.frames.find((frame) => frame.event === "error");
+  const rustErrorFrame = rustChannel.frames.find((frame) => frame.event === "error");
+  await record({ kind: "error-parity", name: "CHANNEL_ERROR/python", raw: pythonChannel.raw, response: pythonChannel.frames });
+  await record({ kind: "error-parity", name: "CHANNEL_ERROR/rust", raw: rustChannel.raw, response: rustChannel.frames });
+  assert(pythonErrorFrame, "Python CHANNEL_ERROR emits error SSE frame");
+  assert(rustErrorFrame, "Rust CHANNEL_ERROR emits error SSE frame");
+  assertDeepEqual(pythonErrorFrame.data, rustErrorFrame.data, "CHANNEL_ERROR SSE error payloads match");
+
+  const [pythonWsMissing, rustWsMissing] = await Promise.all([
+    assertWebSocketClose(PYTHON_BASE_URL, "/ws/does_not_exist"),
+    assertWebSocketClose(RUST_BASE_URL, "/ws/does_not_exist"),
+  ]);
+  assertEqual(pythonWsMissing.code, 4004, "Python WS handler-not-found close code");
+  assertEqual(rustWsMissing.code, 4004, "Rust WS handler-not-found close code");
+
+  const panicFrame = { event: "join", data: { user: "__panic__", timestamp: "2024-01-01T00:00:00.000Z" } };
+  const [pythonWsPanic, rustWsPanic] = await Promise.all([
+    assertWebSocketClose(PYTHON_BASE_URL, "/ws/chat", panicFrame),
+    assertWebSocketClose(RUST_BASE_URL, "/ws/chat", panicFrame),
+  ]);
+  assertEqual(pythonWsPanic.code, 1011, "Python WS handler-panic close code");
+  assertEqual(rustWsPanic.code, 1011, "Rust WS handler-panic close code");
+  await record({ kind: "error-parity", name: "WEBSOCKET_ERROR", response: { pythonMissing: pythonWsMissing, rustMissing: rustWsMissing, pythonPanic: pythonWsPanic, rustPanic: rustWsPanic } });
 }
 
 async function postUpload(baseUrl: string, path: string, file: File, args: unknown): Promise<{ status: number; raw: string; json: unknown }> {
@@ -675,30 +863,44 @@ async function main(): Promise<void> {
   await appendLog("harness.log", `run=${runId} mode=${mode} pythonBaseUrl=${PYTHON_BASE_URL} rustBaseUrl=${RUST_BASE_URL}\n`);
 
   if (mode === "rust" || mode === "all") await generateRustClient();
-  if (mode === "cross" || mode === "all" || mode === "parity") await generatePythonClient();
+  if (mode === "cross" || mode === "all" || mode === "parity" || mode === "errors" || mode === "case-normalization") await generatePythonClient();
 
   const pythonClient = mode === "python" || mode === "cross" || mode === "all" ? await loadClient(PYTHON_API_PATH) : undefined;
   const rustClient = mode === "rust" || mode === "all" ? await loadClient(RUST_API_PATH) : undefined;
 
   const servers: ServerProcess[] = [];
   try {
-    if (mode === "python" || mode === "all" || mode === "parity") servers.push(await startPythonServer(PYTHON_BASE_URL));
-    if (mode === "rust" || mode === "cross" || mode === "all" || mode === "parity") servers.push(await startRustServer(RUST_BASE_URL));
+    if (mode === "debug-flag") {
+      await step("cross-server debug flag hides and exposes internal errors", testDebugFlagParity);
+    } else {
+      const needsPython = mode === "python" || mode === "all" || mode === "parity" || mode === "errors" || mode === "case-normalization";
+      const needsRust = mode === "rust" || mode === "cross" || mode === "all" || mode === "parity" || mode === "errors" || mode === "case-normalization";
+      if (needsPython) servers.push(await startPythonServer(PYTHON_BASE_URL));
+      if (needsRust) servers.push(await startRustServer(RUST_BASE_URL));
 
-    await Promise.all([
-      ...(mode === "python" || mode === "all" || mode === "parity" ? [waitForHealth(PYTHON_BASE_URL, "python")] : []),
-      ...(mode === "rust" || mode === "cross" || mode === "all" || mode === "parity" ? [waitForHealth(RUST_BASE_URL, "rust")] : []),
-    ]);
+      await Promise.all([
+        ...(needsPython ? [waitForHealth(PYTHON_BASE_URL, "python")] : []),
+        ...(needsRust ? [waitForHealth(RUST_BASE_URL, "rust")] : []),
+      ]);
 
-    if (mode === "python") await runSuite({ label: "python", baseUrl: PYTHON_BASE_URL, client: pythonClient! });
-    if (mode === "rust") await runSuite({ label: "rust", baseUrl: RUST_BASE_URL, client: rustClient! });
-    if (mode === "cross") await runSuite({ label: "cross-python-client-on-rust", baseUrl: RUST_BASE_URL, client: pythonClient! });
-    if (mode === "parity") await step("cross-server byte parity: channel/ws/upload", testCrossServerParity);
-    if (mode === "all") {
-      await runSuite({ label: "python", baseUrl: PYTHON_BASE_URL, client: pythonClient! });
-      await runSuite({ label: "rust", baseUrl: RUST_BASE_URL, client: rustClient! });
-      await runSuite({ label: "cross-python-client-on-rust", baseUrl: RUST_BASE_URL, client: pythonClient! });
-      await step("cross-server byte parity: channel/ws/upload", testCrossServerParity);
+      if (mode === "python") await runSuite({ label: "python", baseUrl: PYTHON_BASE_URL, client: pythonClient! });
+      if (mode === "rust") await runSuite({ label: "rust", baseUrl: RUST_BASE_URL, client: rustClient! });
+      if (mode === "cross") await runSuite({ label: "cross-python-client-on-rust", baseUrl: RUST_BASE_URL, client: pythonClient! });
+      if (mode === "parity") await step("cross-server byte parity: channel/ws/upload", testCrossServerParity);
+      if (mode === "errors") {
+        await step("cross-server error envelope and WS close code parity", testErrorEnvelopeParity);
+        await step("cross-server SSE error termination", testSseErrorTermination);
+      }
+      if (mode === "case-normalization") await step("cross-server snake/camel request key acceptance", testCaseNormalizationParity);
+      if (mode === "all") {
+        await runSuite({ label: "python", baseUrl: PYTHON_BASE_URL, client: pythonClient! });
+        await runSuite({ label: "rust", baseUrl: RUST_BASE_URL, client: rustClient! });
+        await runSuite({ label: "cross-python-client-on-rust", baseUrl: RUST_BASE_URL, client: pythonClient! });
+        await step("cross-server byte parity: channel/ws/upload", testCrossServerParity);
+        await step("cross-server error envelope parity", testErrorEnvelopeParity);
+        await step("cross-server SSE error termination", testSseErrorTermination);
+        await step("cross-server snake/camel request key acceptance", testCaseNormalizationParity);
+      }
     }
 
     await Bun.write(`${LOG_DIR}/summary.json`, `${JSON.stringify({ mode, pythonBaseUrl: PYTHON_BASE_URL, rustBaseUrl: RUST_BASE_URL, testResults, evidenceCount: evidence.length }, null, 2)}\n`);

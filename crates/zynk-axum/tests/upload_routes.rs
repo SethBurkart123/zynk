@@ -193,7 +193,7 @@ async fn upload_route_returns_upload_not_found_for_unknown_or_non_upload() {
     let (status, body) = post_multipart(router.clone(), "/upload/missing_axum", "{}", &[]).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["code"], "UPLOAD_HANDLER_NOT_FOUND");
-    assert_eq!(body["details"], json!({"upload": "missing_axum"}));
+    assert_eq!(body["details"], json!({"handler": "missing_axum"}));
 
     let (status, body) = post_multipart(router, "/upload/rpc_not_upload_axum", "{}", &[]).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
