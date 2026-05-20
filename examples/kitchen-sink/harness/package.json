@@ -1,0 +1,13 @@
+{
+  "name": "zynk-kitchen-sink-harness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun run index.ts",
+    "typecheck": "bun x tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.3",
+    "typescript": "^5.3.0"
+  }
+}

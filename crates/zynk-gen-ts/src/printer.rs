@@ -201,11 +201,31 @@ fn print_upload(printer: &mut TsPrinter, endpoint: &Endpoint, graph: &ApiGraph) 
         "export function {fn_name}(args: {params_ty}): UploadHandle<{return_ty}> {{"
     ));
     printer.indented(|printer| {
-        printer.line(format!(
-            "return createUpload<{return_ty}>(\"{}\", {files_expr}, {});",
-            endpoint.name,
-            args_object(&endpoint.params, graph)
-        ));
+        if returns_model_like(&endpoint.returns) {
+            printer.line(format!(
+                "const handle = createUpload<any>(\"{}\", {files_expr}, {});",
+                endpoint.name,
+                args_object(&endpoint.params, graph)
+            ));
+            printer.line("return {");
+            printer.indented(|printer| {
+                printer.line(format!(
+                    "promise: handle.promise.then((_r: any) => ({})),",
+                    response_mapping(&endpoint.returns, "_r", graph)
+                ));
+                printer.line("abort: () => handle.abort(),");
+                printer.line(format!(
+                    "onProgress: (callback) => {{ handle.onProgress(callback); return handle as unknown as UploadHandle<{return_ty}>; }},"
+                ));
+            });
+            printer.line("};");
+        } else {
+            printer.line(format!(
+                "return createUpload<{return_ty}>(\"{}\", {files_expr}, {});",
+                endpoint.name,
+                args_object(&endpoint.params, graph)
+            ));
+        }
     });
     printer.line("}");
 }
@@ -749,7 +769,7 @@ mod tests {
         let mut upload = zynk_schema::Endpoint::new(
             "upload_file",
             zynk_schema::EndpointKind::Upload,
-            TypeRef::primitive("string"),
+            TypeRef::model("simple_model"),
         );
         upload.file_param = Some("file".to_string());
         upload.params.push(zynk_schema::Param::new(
@@ -809,9 +829,12 @@ mod tests {
             "/**\n * Stream items.\n */\nexport function watchItems(): BridgeChannel<SimpleModel>"
         ));
         assert!(output.contains("return createChannel<SimpleModel>(\"watch_items\", {});"));
-        assert!(output.contains("export function uploadFile(args: { file: File; itemId: number }): UploadHandle<string>"));
+        assert!(output.contains("export function uploadFile(args: { file: File; itemId: number }): UploadHandle<SimpleModel>"));
         assert!(output.contains(
-            "return createUpload<string>(\"upload_file\", [args.file], { item_id: args.itemId });"
+            "const handle = createUpload<any>(\"upload_file\", [args.file], { item_id: args.itemId });"
+        ));
+        assert!(output.contains(
+            "promise: handle.promise.then((_r: any) => ({ itemId: _r.item_id, note: _r.note, label: _r.label, tag: _r.tag })),"
         ));
         assert!(output
             .contains("export function downloadReportUrl(args: { reportId: string }): string"));

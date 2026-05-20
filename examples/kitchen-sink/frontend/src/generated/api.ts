@@ -324,6 +324,15 @@ export async function deleteUser(args: { userId: number }): Promise<boolean> {
 }
 
 /**
+ * Download a static sample file by filename.
+ */
+export function downloadSampleUrl(args: { filename?: string }): string {
+    const params = new URLSearchParams();
+    if (args.filename !== undefined) params.set("filename", String(args.filename));
+    return `${getBaseUrl()}/static/download_sample?${params}`;
+}
+
+/**
  * Get weather forecast for a city.
  * 
  * Returns a list of forecasts for the specified number of days.
@@ -462,7 +471,12 @@ export async function updateUser(args: { userId: number; name?: string | null; e
  * Only accepts document files up to 10MB.
  */
 export function uploadDocument(args: { file: File; extractMetadata?: boolean }): UploadHandle<DocumentUploadResult> {
-    return createUpload<DocumentUploadResult>("upload_document", [args.file], { extract_metadata: args.extractMetadata });
+    const handle = createUpload<any>("upload_document", [args.file], { extract_metadata: args.extractMetadata });
+    return {
+        promise: handle.promise.then((_r: any) => ({ id: _r.id, filename: _r.filename, size: _r.size, pageCount: _r.page_count })),
+        abort: () => handle.abort(),
+        onProgress: (callback) => { handle.onProgress(callback); return handle as unknown as UploadHandle<DocumentUploadResult>; },
+    };
 }
 
 /**
@@ -471,7 +485,12 @@ export function uploadDocument(args: { file: File; extractMetadata?: boolean }):
  * Returns file information including a checksum.
  */
 export function uploadFile(args: { file: File }): UploadHandle<FileInfo> {
-    return createUpload<FileInfo>("upload_file", [args.file], {});
+    const handle = createUpload<any>("upload_file", [args.file], {});
+    return {
+        promise: handle.promise.then((_r: any) => ({ id: _r.id, filename: _r.filename, size: _r.size, contentType: _r.content_type, checksum: _r.checksum, uploadedAt: _r.uploaded_at })),
+        abort: () => handle.abort(),
+        onProgress: (callback) => { handle.onProgress(callback); return handle as unknown as UploadHandle<FileInfo>; },
+    };
 }
 
 /**
@@ -480,7 +499,12 @@ export function uploadFile(args: { file: File }): UploadHandle<FileInfo> {
  * Returns information about all uploaded files.
  */
 export function uploadFiles(args: { files: File[] }): UploadHandle<FileInfo[]> {
-    return createUpload<FileInfo[]>("upload_files", args.files, {});
+    const handle = createUpload<any>("upload_files", args.files, {});
+    return {
+        promise: handle.promise.then((_r: any) => (_r.map((_item: any) => ({ id: _item.id, filename: _item.filename, size: _item.size, contentType: _item.content_type, checksum: _item.checksum, uploadedAt: _item.uploaded_at })))),
+        abort: () => handle.abort(),
+        onProgress: (callback) => { handle.onProgress(callback); return handle as unknown as UploadHandle<FileInfo[]>; },
+    };
 }
 
 /**
@@ -489,7 +513,12 @@ export function uploadFiles(args: { files: File[] }): UploadHandle<FileInfo[]> {
  * Only accepts image files up to 5MB.
  */
 export function uploadImage(args: { file: File; generateThumbnail?: boolean }): UploadHandle<ImageUploadResult> {
-    return createUpload<ImageUploadResult>("upload_image", [args.file], { generate_thumbnail: args.generateThumbnail });
+    const handle = createUpload<any>("upload_image", [args.file], { generate_thumbnail: args.generateThumbnail });
+    return {
+        promise: handle.promise.then((_r: any) => ({ id: _r.id, filename: _r.filename, width: _r.width, height: _r.height, thumbnailBase64: _r.thumbnail_base64 })),
+        abort: () => handle.abort(),
+        onProgress: (callback) => { handle.onProgress(callback); return handle as unknown as UploadHandle<ImageUploadResult>; },
+    };
 }
 
 /**
@@ -498,6 +527,11 @@ export function uploadImage(args: { file: File; generateThumbnail?: boolean }): 
  * Accepts files up to 50MB each, optionally grouped into an album.
  */
 export function uploadMedia(args: { files: File[]; albumName?: string | null }): UploadHandle<FileInfo[]> {
-    return createUpload<FileInfo[]>("upload_media", args.files, { album_name: args.albumName });
+    const handle = createUpload<any>("upload_media", args.files, { album_name: args.albumName });
+    return {
+        promise: handle.promise.then((_r: any) => (_r.map((_item: any) => ({ id: _item.id, filename: _item.filename, size: _item.size, contentType: _item.content_type, checksum: _item.checksum, uploadedAt: _item.uploaded_at })))),
+        abort: () => handle.abort(),
+        onProgress: (callback) => { handle.onProgress(callback); return handle as unknown as UploadHandle<FileInfo[]>; },
+    };
 }
 
