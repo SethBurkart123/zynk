@@ -1,0 +1,5 @@
+error: #[zynk::command] and #[zynk::message] can only be applied to free functions; methods with self receivers are not supported
+ --> tests/expand/command_rejects_self.rs:7:20
+  |
+7 |     async fn greet(&mut self, name: String) -> String {
+  |                    ^

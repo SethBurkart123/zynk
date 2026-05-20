@@ -10,6 +10,7 @@ use serde_json::Value;
 use thiserror::Error;
 use zynk_schema::{TypeKind, TypeRef};
 
+pub use inventory;
 pub use zynk_schema::EndpointKind;
 
 /// Request validation failed.
