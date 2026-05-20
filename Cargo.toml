@@ -8,6 +8,7 @@ members = [
     "crates/zynk-runtime",
     "crates/zynk-macros",
     "crates/zynk-axum",
+    "examples/rust-axum-kitchen-sink",
 ]
 resolver = "2"
 

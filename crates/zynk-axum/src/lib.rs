@@ -45,6 +45,8 @@ struct BridgeState {
     upload_handlers: HashMap<HandlerKey, Arc<dyn UploadHandler>>,
     static_handlers: HashMap<HandlerKey, Arc<dyn StaticHandler>>,
     ws_handlers: HashMap<HandlerKey, Arc<dyn WsHandler>>,
+    models: BTreeMap<String, zynk_runtime::zynk_schema::ModelDef>,
+    enums: BTreeMap<String, zynk_runtime::zynk_schema::EnumDef>,
     debug: bool,
     keepalive_interval: Duration,
 }
@@ -304,6 +306,14 @@ impl ZynkBridge {
         self
     }
 
+    /// Register or replace endpoint metadata used by routes and schema dumps.
+    pub fn register_endpoint_meta(mut self, endpoint: &'static EndpointMeta) -> Self {
+        Arc::make_mut(&mut self.state)
+            .endpoints
+            .insert(endpoint.name.to_string(), endpoint);
+        self
+    }
+
     /// Register a type-erased handler for an endpoint metadata `HandlerKey`.
     ///
     /// The current macro layer publishes stable handler keys in inventory. This
@@ -378,6 +388,22 @@ impl ZynkBridge {
         self
     }
 
+    /// Register a schema model definition for `dump_schema_json()` output.
+    pub fn register_model(mut self, model: zynk_runtime::zynk_schema::ModelDef) -> Self {
+        Arc::make_mut(&mut self.state)
+            .models
+            .insert(model.name.clone(), model);
+        self
+    }
+
+    /// Register a schema enum definition for `dump_schema_json()` output.
+    pub fn register_enum(mut self, enum_def: zynk_runtime::zynk_schema::EnumDef) -> Self {
+        Arc::make_mut(&mut self.state)
+            .enums
+            .insert(enum_def.name.clone(), enum_def);
+        self
+    }
+
     /// Set the idle interval between `keepalive` SSE frames.
     pub fn keepalive_interval(mut self, interval: Duration) -> Self {
         Arc::make_mut(&mut self.state).keepalive_interval = interval;
@@ -424,6 +450,12 @@ impl ZynkBridge {
         for endpoint in self.state.endpoints.values() {
             graph.insert_endpoint(endpoint_to_schema(endpoint));
         }
+        for model in self.state.models.values() {
+            graph.insert_model(model.clone());
+        }
+        for enum_def in self.state.enums.values() {
+            graph.insert_enum(enum_def.clone());
+        }
         graph
     }
 
@@ -445,6 +477,8 @@ impl ZynkBridge {
                 upload_handlers: HashMap::new(),
                 static_handlers: HashMap::new(),
                 ws_handlers: HashMap::new(),
+                models: BTreeMap::new(),
+                enums: BTreeMap::new(),
                 debug,
                 keepalive_interval: Duration::from_secs(30),
             }),
@@ -468,6 +502,8 @@ impl Clone for BridgeState {
             upload_handlers: self.upload_handlers.clone(),
             static_handlers: self.static_handlers.clone(),
             ws_handlers: self.ws_handlers.clone(),
+            models: self.models.clone(),
+            enums: self.enums.clone(),
             debug: self.debug,
             keepalive_interval: self.keepalive_interval,
         }
