@@ -31,10 +31,7 @@ fn python_bridge_dump_deserializes_without_loss_and_preserves_field_flags() {
 
     let stdout = String::from_utf8(output.stdout).expect("schema dump stdout is utf-8");
     let graph: ApiGraph = serde_json::from_str(stdout.trim()).unwrap_or_else(|err| {
-        panic!(
-            "Python dump did not deserialize as zynk_schema::ApiGraph: {err}\nstdout:\n{}",
-            stdout
-        )
+        panic!("Python dump did not deserialize as zynk_schema::ApiGraph: {err}\nstdout:\n{stdout}")
     });
 
     assert_endpoint_kinds_survived(&graph);
