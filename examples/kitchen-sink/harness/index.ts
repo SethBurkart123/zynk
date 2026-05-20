@@ -331,9 +331,9 @@ async function testWebSocket(): Promise<void> {
       reject(new Error(`websocket error: ${String(error)}`));
     });
     socket.onConnect(() => {
-      socket.send("join", { user, timestamp: now });
-      socket.send("chat_message", { user, text: chatText, timestamp: now });
-      socket.send("typing", { user, is_typing: true } as unknown as { user: string; isTyping: boolean });
+      socket.sendJoin({ user, timestamp: now });
+      socket.sendChatMessage({ user, text: chatText, timestamp: now });
+      socket.sendTyping({ user, isTyping: true });
     });
     socket.connect();
   });

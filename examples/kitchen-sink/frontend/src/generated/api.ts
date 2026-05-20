@@ -218,11 +218,15 @@ export class ChatSocket {
         return () => this.listeners.get(eventName)?.delete(cb);
     }
 
-    send<K extends keyof ChatClientEvents>(event: K, data: ChatClientEvents[K]): void {
+    private sendRaw(event: string, data: unknown): void {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             throw new Error('[Zynk] WebSocket is not connected');
         }
         this.ws.send(JSON.stringify({ event, data }));
+    }
+
+    send<K extends keyof ChatClientEvents>(event: K, data: ChatClientEvents[K]): void {
+        this.sendRaw(event as string, data);
     }
 
     onConnect(callback: () => void): () => void {
@@ -261,19 +265,19 @@ export class ChatSocket {
     }
 
     sendChatMessage(data: ChatMessage): void {
-        this.send("chat_message", { user: data.user, text: data.text, timestamp: data.timestamp } as unknown as ChatMessage);
+        this.sendRaw("chat_message", { user: data.user, text: data.text, timestamp: data.timestamp });
     }
 
     sendJoin(data: UserJoined): void {
-        this.send("join", { user: data.user, timestamp: data.timestamp } as unknown as UserJoined);
+        this.sendRaw("join", { user: data.user, timestamp: data.timestamp });
     }
 
     sendLeave(data: UserLeft): void {
-        this.send("leave", { user: data.user, timestamp: data.timestamp } as unknown as UserLeft);
+        this.sendRaw("leave", { user: data.user, timestamp: data.timestamp });
     }
 
     sendTyping(data: TypingIndicator): void {
-        this.send("typing", { user: data.user, is_typing: data.isTyping } as unknown as TypingIndicator);
+        this.sendRaw("typing", { user: data.user, is_typing: data.isTyping });
     }
 }
 

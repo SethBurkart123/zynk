@@ -351,12 +351,18 @@ fn print_websocket(printer: &mut TsPrinter, endpoint: &Endpoint, graph: &ApiGrap
         });
         printer.line("}");
         printer.blank_line();
-        printer.line(format!("send<K extends keyof {client_events}>(event: K, data: {client_events}[K]): void {{"));
+        printer.line("private sendRaw(event: string, data: unknown): void {");
         printer.indented(|printer| {
             printer.line("if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {");
             printer.indented(|printer| printer.line("throw new Error('[Zynk] WebSocket is not connected');"));
             printer.line("}");
             printer.line("this.ws.send(JSON.stringify({ event, data }));");
+        });
+        printer.line("}");
+        printer.blank_line();
+        printer.line(format!("send<K extends keyof {client_events}>(event: K, data: {client_events}[K]): void {{"));
+        printer.indented(|printer| {
+            printer.line("this.sendRaw(event as string, data);");
         });
         printer.line("}");
         printer.blank_line();
@@ -398,14 +404,7 @@ fn print_websocket(printer: &mut TsPrinter, endpoint: &Endpoint, graph: &ApiGrap
             printer.blank_line();
             printer.line(format!("{method}(data: {ty}): void {{"));
             printer.indented(|printer| {
-                if payload == "data" {
-                    printer.line(format!("this.send(\"{}\", data);", event.source_name));
-                } else {
-                    printer.line(format!(
-                        "this.send(\"{}\", {payload} as unknown as {ty});",
-                        event.source_name
-                    ));
-                }
+                printer.line(format!("this.sendRaw(\"{}\", {payload});", event.source_name));
             });
             printer.line("}");
         }
@@ -807,7 +806,7 @@ mod tests {
         ws.client_events.push(zynk_schema::Param::new(
             "send_message",
             "sendMessage",
-            TypeRef::primitive("string"),
+            TypeRef::model("simple_model"),
             true,
         ));
         graph.insert_endpoint(ws);
@@ -845,7 +844,11 @@ mod tests {
         assert!(output.contains("export interface ChatSocketServerEvents"));
         assert!(output.contains("new_message: SimpleModel;"));
         assert!(output.contains("export class ChatSocketSocket"));
-        assert!(output.contains("sendSendMessage(data: string): void"));
+        assert!(output.contains("sendSendMessage(data: SimpleModel): void"));
+        assert!(output.contains(
+            "this.sendRaw(\"send_message\", { item_id: data.itemId, note: data.note, label: data.label, tag: data.tag });"
+        ));
+        assert!(!output.contains("as unknown as SimpleModel"));
         assert!(!output.contains("?: boolean | undefined"));
     }
 }
