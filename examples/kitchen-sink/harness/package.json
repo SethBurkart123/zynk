@@ -4,6 +4,9 @@
   "type": "module",
   "scripts": {
     "test": "bun run index.ts",
+    "test:rust": "bun run index.ts --mode=rust",
+    "test:cross": "bun run index.ts --mode=cross",
+    "test:all": "bun run index.ts --mode=all",
     "test:effect": "bun run effect.ts",
     "typecheck": "bun x tsc --noEmit"
   },
