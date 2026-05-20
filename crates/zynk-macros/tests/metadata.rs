@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 
-use zynk_macros::{command, message};
+use zynk_macros::{command, message, static_file, upload};
 
 struct NoopWaker;
 
@@ -37,6 +37,36 @@ struct ChatPayload {
 fn chat_message(room_id: String, payload: ChatPayload) {
     assert_eq!(room_id, "general");
     assert_eq!(payload.text, "hello");
+}
+
+#[derive(Clone, Debug)]
+struct UploadFile {
+    name: String,
+}
+
+#[upload(max_size = "10MB", allowed_types = ["image/*"])]
+async fn upload_avatar(file: UploadFile, user_id: i64, display_name: Option<String>) -> String {
+    assert_eq!(file.name, "avatar.png");
+    assert_eq!(display_name.as_deref(), Some("Ada"));
+    format!("avatar-{user_id}")
+}
+
+#[upload]
+async fn upload_gallery(files: Vec<UploadFile>, album_id: i64) -> i64 {
+    assert_eq!(files.len(), 2);
+    album_id
+}
+
+#[derive(Debug, PartialEq)]
+struct StaticFile {
+    path: String,
+}
+
+#[static_file]
+fn avatar_static(id: i64) -> StaticFile {
+    StaticFile {
+        path: format!("avatars/{id}.png"),
+    }
 }
 
 #[test]
@@ -104,5 +134,106 @@ fn message_preserves_fn_behavior_and_registers_ws_meta() {
     assert_eq!(
         meta.server_events[1].ty,
         zynk_runtime::TypeRefStatic::model("ChatPayload")
+    );
+}
+
+#[test]
+fn upload_preserves_fn_behavior_and_registers_file_metadata() {
+    assert_eq!(
+        block_on_ready(upload_avatar(
+            UploadFile {
+                name: String::from("avatar.png"),
+            },
+            7,
+            Some(String::from("Ada")),
+        )),
+        "avatar-7"
+    );
+
+    let meta = zynk_runtime::inventory::iter::<zynk_runtime::EndpointMeta>
+        .into_iter()
+        .find(|meta| meta.name == "upload_avatar")
+        .expect("upload endpoint metadata is registered");
+
+    assert_eq!(meta.kind, zynk_runtime::EndpointKind::Upload);
+    assert_eq!(meta.file_param, Some("file"));
+    assert!(!meta.multi_file);
+    assert_eq!(meta.max_size, Some(10_485_760));
+    assert_eq!(meta.allowed_types, ["image/*"]);
+    assert_eq!(
+        meta.returns,
+        zynk_runtime::TypeRefStatic::primitive("string")
+    );
+    assert_eq!(meta.params.len(), 2);
+    assert_eq!(meta.params[0].source_name, "user_id");
+    assert_eq!(meta.params[0].wire_name, "userId");
+    assert_eq!(
+        meta.params[0].ty,
+        zynk_runtime::TypeRefStatic::primitive("number")
+    );
+    assert_eq!(meta.params[1].source_name, "display_name");
+    assert!(!meta.params[1].required);
+}
+
+#[test]
+fn upload_detects_vec_upload_file_as_multi_file() {
+    assert_eq!(
+        block_on_ready(upload_gallery(
+            vec![
+                UploadFile {
+                    name: String::from("one.png"),
+                },
+                UploadFile {
+                    name: String::from("two.png"),
+                },
+            ],
+            42,
+        )),
+        42
+    );
+
+    let meta = zynk_runtime::inventory::iter::<zynk_runtime::EndpointMeta>
+        .into_iter()
+        .find(|meta| meta.name == "upload_gallery")
+        .expect("multi-file upload endpoint metadata is registered");
+
+    assert_eq!(meta.kind, zynk_runtime::EndpointKind::Upload);
+    assert_eq!(meta.file_param, Some("files"));
+    assert!(meta.multi_file);
+    assert_eq!(meta.max_size, None);
+    assert!(meta.allowed_types.is_empty());
+    assert_eq!(meta.params.len(), 1);
+    assert_eq!(meta.params[0].source_name, "album_id");
+}
+
+#[test]
+fn static_file_preserves_fn_behavior_and_registers_static_meta() {
+    assert_eq!(
+        avatar_static(5),
+        StaticFile {
+            path: String::from("avatars/5.png"),
+        }
+    );
+
+    let meta = zynk_runtime::inventory::iter::<zynk_runtime::EndpointMeta>
+        .into_iter()
+        .find(|meta| meta.name == "avatar_static")
+        .expect("static endpoint metadata is registered");
+
+    assert_eq!(meta.kind, zynk_runtime::EndpointKind::Static);
+    assert_eq!(meta.file_param, None);
+    assert!(!meta.multi_file);
+    assert_eq!(meta.max_size, None);
+    assert!(meta.allowed_types.is_empty());
+    assert_eq!(meta.params.len(), 1);
+    assert_eq!(meta.params[0].source_name, "id");
+    assert_eq!(meta.params[0].wire_name, "id");
+    assert_eq!(
+        meta.params[0].ty,
+        zynk_runtime::TypeRefStatic::primitive("number")
+    );
+    assert_eq!(
+        meta.returns,
+        zynk_runtime::TypeRefStatic::model("StaticFile")
     );
 }

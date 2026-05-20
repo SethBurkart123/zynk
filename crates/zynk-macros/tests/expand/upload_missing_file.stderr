@@ -1,0 +1,5 @@
+error: #[zynk::upload] requires one UploadFile or Vec<UploadFile> parameter
+ --> tests/expand/upload_missing_file.rs:4:10
+  |
+4 | async fn upload_without_file(user_id: i64) -> String {
+  |          ^^^^^^^^^^^^^^^^^^^

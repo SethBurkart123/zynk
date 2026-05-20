@@ -86,6 +86,34 @@ CLI_FORBIDDEN_DEPS = {
     "zynk-axum",
 }
 
+MACROS_ALLOWED_DEPS = {
+    "proc-macro2",
+    "quote",
+    "syn",
+    "zynk-runtime",
+}
+
+MACROS_FORBIDDEN_DEPS = {
+    "actix",
+    "actix-web",
+    "axum",
+    "hyper",
+    "poem",
+    "reqwest",
+    "rocket",
+    "salvo",
+    "tonic",
+    "tokio",
+    "tower",
+    "tower-http",
+    "warp",
+    "zynk-axum",
+    "zynk-cli",
+    "zynk-codegen",
+    "zynk-gen-effect",
+    "zynk-gen-ts",
+}
+
 PYTHON_FORBIDDEN_RUNTIME_DEPS = {
     "maturin",
     "maturin-runtime",
@@ -225,6 +253,29 @@ def main() -> int:
                         f"{relative_path}: zynk-cli may not depend on "
                         f"'{dependency}' in [{section}]; it must stay free of HTTP "
                         "frameworks and server-binding crates"
+                    )
+
+        if crate_name == "zynk-macros":
+            lib_config = manifest.get("lib", {})
+            if not isinstance(lib_config, dict) or lib_config.get("proc-macro") is not True:
+                violations.append(
+                    f"{relative_path}: zynk-macros must declare [lib] proc-macro = true"
+                )
+
+            for section, dependency, _value in dependency_entries:
+                if section != "dependencies":
+                    continue
+                if dependency in MACROS_FORBIDDEN_DEPS:
+                    violations.append(
+                        f"{relative_path}: zynk-macros may not depend on "
+                        f"'{dependency}' in [{section}]; macros must stay free of "
+                        "servers, generators, codegen, CLI, and async runtimes"
+                    )
+                if dependency not in MACROS_ALLOWED_DEPS:
+                    violations.append(
+                        f"{relative_path}: zynk-macros dependency '{dependency}' in "
+                        f"[{section}] is not in the allowed set "
+                        f"{sorted(MACROS_ALLOWED_DEPS)}"
                     )
 
     python_manifest = ROOT / "bindings/python/pyproject.toml"
