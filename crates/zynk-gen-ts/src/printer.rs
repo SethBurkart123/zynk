@@ -490,6 +490,15 @@ fn args_object(params: &[Param], graph: &ApiGraph) -> String {
     )
 }
 
+fn map_variable(depth: usize) -> String {
+    match depth {
+        0 => "_item".to_string(),
+        1 => "_inner".to_string(),
+        2 => "_deep".to_string(),
+        depth => format!("_item{depth}"),
+    }
+}
+
 fn return_type(ty: &TypeRef, graph: &ApiGraph) -> String {
     let base = match ty.kind {
         TypeKind::Void => lowering::lower_return(ty),
@@ -507,20 +516,7 @@ fn event_type(ty: &TypeRef, graph: &ApiGraph) -> String {
 }
 
 fn optional_nullable_type(base: String, optional: bool, nullable: bool) -> String {
-    let mut parts = vec![base];
-    if nullable {
-        parts.push("null".to_string());
-    }
-    if optional {
-        parts.push("undefined".to_string());
-    }
-    let mut unique = Vec::new();
-    for part in parts {
-        if !unique.contains(&part) {
-            unique.push(part);
-        }
-    }
-    unique.join(" | ")
+    lowering::apply_optional_nullable(base, optional, nullable)
 }
 
 fn returns_model_like(ty: &TypeRef) -> bool {
@@ -532,30 +528,40 @@ fn returns_model_like(ty: &TypeRef) -> bool {
 }
 
 fn request_mapping(ty: &TypeRef, expr: &str, graph: &ApiGraph) -> String {
+    request_mapping_at_depth(ty, expr, graph, 0)
+}
+
+fn request_mapping_at_depth(ty: &TypeRef, expr: &str, graph: &ApiGraph, depth: usize) -> String {
     match ty.kind {
-        TypeKind::Model => model_request_mapping(ty.name.as_deref(), expr, graph),
+        TypeKind::Model => model_request_mapping(ty.name.as_deref(), expr, graph, depth),
         TypeKind::Array if ty.inner.first().is_some_and(returns_model_like) => {
             let item = ty.inner.first().expect("checked by is_some_and");
-            let item_mapping = request_mapping(item, "_item", graph);
-            format!("{expr}.map((_item) => ({item_mapping}))")
+            let variable = map_variable(depth);
+            let item_mapping = request_mapping_at_depth(item, &variable, graph, depth + 1);
+            format!("{expr}.map(({variable}) => ({item_mapping}))")
         }
         _ => expr.to_string(),
     }
 }
 
 fn response_mapping(ty: &TypeRef, expr: &str, graph: &ApiGraph) -> String {
+    response_mapping_at_depth(ty, expr, graph, 0)
+}
+
+fn response_mapping_at_depth(ty: &TypeRef, expr: &str, graph: &ApiGraph, depth: usize) -> String {
     match ty.kind {
-        TypeKind::Model => model_mapping(ty.name.as_deref(), expr, graph),
+        TypeKind::Model => model_mapping(ty.name.as_deref(), expr, graph, depth),
         TypeKind::Array if ty.inner.first().is_some_and(returns_model_like) => {
             let item = ty.inner.first().expect("checked by is_some_and");
-            let item_mapping = response_mapping(item, "_item", graph);
-            format!("{expr}.map((_item: any) => ({item_mapping}))")
+            let variable = map_variable(depth);
+            let item_mapping = response_mapping_at_depth(item, &variable, graph, depth + 1);
+            format!("{expr}.map(({variable}: any) => ({item_mapping}))")
         }
         _ => expr.to_string(),
     }
 }
 
-fn model_request_mapping(name: Option<&str>, expr: &str, graph: &ApiGraph) -> String {
+fn model_request_mapping(name: Option<&str>, expr: &str, graph: &ApiGraph, depth: usize) -> String {
     let Some(name) = name else {
         return expr.to_string();
     };
@@ -569,7 +575,12 @@ fn model_request_mapping(name: Option<&str>, expr: &str, graph: &ApiGraph) -> St
             format!(
                 "{}: {}",
                 field.source_name,
-                request_mapping(&field.ty, &format!("{expr}.{}", field.wire_name), graph)
+                request_mapping_at_depth(
+                    &field.ty,
+                    &format!("{expr}.{}", field.wire_name),
+                    graph,
+                    depth
+                )
             )
         })
         .collect::<Vec<_>>()
@@ -577,7 +588,7 @@ fn model_request_mapping(name: Option<&str>, expr: &str, graph: &ApiGraph) -> St
     format!("{{ {fields} }}")
 }
 
-fn model_mapping(name: Option<&str>, expr: &str, graph: &ApiGraph) -> String {
+fn model_mapping(name: Option<&str>, expr: &str, graph: &ApiGraph, depth: usize) -> String {
     let Some(name) = name else {
         return expr.to_string();
     };
@@ -591,7 +602,12 @@ fn model_mapping(name: Option<&str>, expr: &str, graph: &ApiGraph) -> String {
             format!(
                 "{}: {}",
                 field.wire_name,
-                response_mapping(&field.ty, &format!("{expr}.{}", field.source_name), graph)
+                response_mapping_at_depth(
+                    &field.ty,
+                    &format!("{expr}.{}", field.source_name),
+                    graph,
+                    depth
+                )
             )
         })
         .collect::<Vec<_>>()
@@ -653,7 +669,7 @@ impl TsPrinter {
 
 #[cfg(test)]
 mod tests {
-    use zynk_schema::{ApiGraph, EnumDef, Field, ModelDef, TypeRef, Value};
+    use zynk_schema::{ApiGraph, Endpoint, EndpointKind, EnumDef, Field, ModelDef, TypeRef, Value};
 
     use super::{print_api, TsPrinter};
 
@@ -710,6 +726,88 @@ mod tests {
         assert!(output.contains("    state?: \"todo\";"));
         assert!(output.contains("    priority: \"low\" | \"high\" | null;"));
         assert!(!output.contains("| undefined"));
+    }
+
+    #[test]
+    fn fields_and_params_reuse_lowering_optional_nullable_helper() {
+        let mut graph = ApiGraph::new();
+
+        let mut model = ModelDef::new("maybe_model");
+        let mut maybe_name = TypeRef::union(vec![
+            TypeRef::primitive("string"),
+            TypeRef::primitive("null"),
+        ]);
+        maybe_name.nullable = true;
+        let mut field = Field::new("maybe_name", "maybeName", maybe_name, true);
+        field.nullable = true;
+        model.fields.push(field);
+        graph.insert_model(model);
+
+        let mut endpoint = Endpoint::new(
+            "update_maybe",
+            EndpointKind::Rpc,
+            TypeRef::primitive("string"),
+        );
+        let mut param_ty = TypeRef::union(vec![
+            TypeRef::primitive("string"),
+            TypeRef::primitive("null"),
+        ]);
+        param_ty.nullable = true;
+        endpoint.params.push(zynk_schema::Param::new(
+            "maybe_name",
+            "maybeName",
+            param_ty,
+            true,
+        ));
+        graph.insert_endpoint(endpoint);
+
+        let output = print_api(&graph);
+
+        assert!(output.contains("maybeName: string | null;"));
+        assert!(output.contains("updateMaybe(args: { maybeName: string | null })"));
+        assert!(!output.contains("null | null"));
+        assert!(!output.contains("undefined | undefined"));
+    }
+
+    #[test]
+    fn nested_response_arrays_use_unique_map_variables() {
+        let mut graph = ApiGraph::new();
+
+        let mut label = ModelDef::new("label");
+        label.fields.push(Field::new(
+            "label_id",
+            "labelId",
+            TypeRef::primitive("number"),
+            true,
+        ));
+        graph.insert_model(label);
+
+        let mut task = ModelDef::new("task");
+        task.fields.push(Field::new(
+            "task_id",
+            "taskId",
+            TypeRef::primitive("number"),
+            true,
+        ));
+        task.fields.push(Field::new(
+            "labels",
+            "labels",
+            TypeRef::array(TypeRef::model("label")),
+            true,
+        ));
+        graph.insert_model(task);
+
+        let endpoint = Endpoint::new(
+            "list_tasks",
+            EndpointKind::Rpc,
+            TypeRef::array(TypeRef::model("task")),
+        );
+        graph.insert_endpoint(endpoint);
+
+        let output = print_api(&graph);
+
+        assert!(output.contains("return _r.map((_item: any) => ({ taskId: _item.task_id, labels: _item.labels.map((_inner: any) => ({ labelId: _inner.label_id })) }));"));
+        assert!(!output.contains("labels: _item.labels.map((_item: any)"));
     }
 
     #[test]

@@ -204,10 +204,12 @@ fn needs_array_parens(lowered: &str) -> bool {
 fn dedupe_union(parts: Vec<String>) -> String {
     let mut output = Vec::new();
     for part in parts {
-        if part.is_empty() || output.contains(&part) {
-            continue;
+        for member in split_top_level_union(&part) {
+            if member.is_empty() || output.contains(&member) {
+                continue;
+            }
+            output.push(member);
         }
-        output.push(part);
     }
 
     if output.is_empty() {
@@ -215,6 +217,52 @@ fn dedupe_union(parts: Vec<String>) -> String {
     } else {
         output.join(" | ")
     }
+}
+
+fn split_top_level_union(input: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut paren_depth: usize = 0;
+    let mut bracket_depth: usize = 0;
+    let mut angle_depth: usize = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (index, ch) in input.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '<' => angle_depth += 1,
+            '>' => angle_depth = angle_depth.saturating_sub(1),
+            '|' if paren_depth == 0
+                && bracket_depth == 0
+                && angle_depth == 0
+                && input[..index].ends_with(' ')
+                && input[index + ch.len_utf8()..].starts_with(' ') =>
+            {
+                parts.push(input[start..index].trim().to_string());
+                start = index + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    parts.push(input[start..].trim().to_string());
+    parts
 }
 
 #[cfg(test)]
@@ -400,5 +448,17 @@ mod tests {
         ty.nullable = true;
 
         assert_eq!(lower(&ty), "string | null | undefined");
+    }
+
+    #[test]
+    fn optional_nullable_helper_deduplicates_existing_union_members() {
+        assert_eq!(
+            apply_optional_nullable("string | null".to_string(), true, true),
+            "string | null | undefined"
+        );
+        assert_eq!(
+            apply_optional_nullable("(\"a\" | \"b\")[]".to_string(), false, true),
+            "(\"a\" | \"b\")[] | null"
+        );
     }
 }

@@ -404,7 +404,7 @@ export async function listLabels(): Promise<TaskLabel[]> {
  */
 export async function listTasks(args: { status?: string | null; priority?: string | null; labelId?: number | null }): Promise<Task[]> {
     const _r = await request<any>("list_tasks", { status: args.status, priority: args.priority, label_id: args.labelId });
-    return _r.map((_item: any) => ({ id: _item.id, title: _item.title, description: _item.description, priority: _item.priority, status: _item.status, labels: _item.labels.map((_item: any) => ({ id: _item.id, name: _item.name, color: _item.color })), createdAt: _item.created_at, dueDate: _item.due_date, assignedTo: _item.assigned_to }));
+    return _r.map((_item: any) => ({ id: _item.id, title: _item.title, description: _item.description, priority: _item.priority, status: _item.status, labels: _item.labels.map((_inner: any) => ({ id: _inner.id, name: _inner.name, color: _inner.color })), createdAt: _item.created_at, dueDate: _item.due_date, assignedTo: _item.assigned_to }));
 }
 
 /**
