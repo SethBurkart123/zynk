@@ -5,6 +5,7 @@ members = [
     "crates/zynk-gen-ts",
     "crates/zynk-gen-effect",
     "crates/zynk-cli",
+    "crates/zynk-runtime",
 ]
 resolver = "2"
 

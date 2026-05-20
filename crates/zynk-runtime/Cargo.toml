@@ -1,0 +1,17 @@
+[package]
+name = "zynk-runtime"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Pure wire-contract runtime types for Zynk server bindings"
+keywords = ["zynk", "runtime", "rpc", "wire"]
+categories = ["web-programming"]
+
+[dependencies]
+zynk-schema = { version = "0.1.0", path = "../zynk-schema" }
+serde.workspace = true
+serde_json.workspace = true
+inventory = "0.3"
+thiserror = "2"

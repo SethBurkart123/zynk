@@ -42,6 +42,34 @@ CODEGEN_FORBIDDEN_DEPS = {
     "zynk-runtime",
 }
 
+RUNTIME_FORBIDDEN_DEPS = {
+    "actix",
+    "actix-web",
+    "axum",
+    "hyper",
+    "poem",
+    "reqwest",
+    "rocket",
+    "salvo",
+    "tonic",
+    "tokio",
+    "tower",
+    "tower-http",
+    "warp",
+    "zynk-codegen",
+    "zynk-gen-effect",
+    "zynk-gen-ts",
+    "zynk-axum",
+}
+
+RUNTIME_ALLOWED_DEPS = {
+    "inventory",
+    "serde",
+    "serde_json",
+    "thiserror",
+    "zynk-schema",
+}
+
 CLI_FORBIDDEN_DEPS = {
     "actix",
     "actix-web",
@@ -173,6 +201,21 @@ def main() -> int:
                         f"{relative_path}: zynk-codegen may not depend on "
                         f"'{dependency}' in [{section}]; it must stay free of HTTP "
                         "frameworks, runtime crates, CLI crates, and specific generators"
+                    )
+
+        if crate_name == "zynk-runtime":
+            for section, dependency, _value in dependency_entries:
+                if dependency in RUNTIME_FORBIDDEN_DEPS:
+                    violations.append(
+                        f"{relative_path}: zynk-runtime may not depend on "
+                        f"'{dependency}' in [{section}]; it must stay free of HTTP "
+                        "frameworks, generators, and server-binding crates"
+                    )
+                if dependency not in RUNTIME_ALLOWED_DEPS:
+                    violations.append(
+                        f"{relative_path}: zynk-runtime dependency '{dependency}' in "
+                        f"[{section}] is not in the allowed set "
+                        f"{sorted(RUNTIME_ALLOWED_DEPS)}"
                     )
 
         if crate_name == "zynk-cli":
