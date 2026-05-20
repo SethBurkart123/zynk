@@ -5,8 +5,10 @@ use zynk_codegen::GeneratedFile;
 use zynk_schema::ApiGraph;
 
 fn fixture_graph() -> ApiGraph {
-    serde_json::from_str(include_str!("../../zynk-gen-ts/tests/fixtures/kitchen_sink_schema.json"))
-        .expect("kitchen sink fixture deserializes as ApiGraph")
+    serde_json::from_str(include_str!(
+        "../../zynk-gen-ts/tests/fixtures/kitchen_sink_schema.json"
+    ))
+    .expect("kitchen sink fixture deserializes as ApiGraph")
 }
 
 fn file<'a>(files: &'a [GeneratedFile], path: &str) -> &'a str {
@@ -48,5 +50,8 @@ fn kitchen_sink_effect_golden_matches_generated_client() {
     );
 
     assert_eq!(file(&generated.files, "api.ts"), expected_api);
-    assert_eq!(file(&generated.files, "_effect_internal.ts"), expected_runtime);
+    assert_eq!(
+        file(&generated.files, "_effect_internal.ts"),
+        expected_runtime
+    );
 }

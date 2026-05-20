@@ -13,23 +13,26 @@ This example demonstrates all the features of Zynk:
 ```bash
 cd backend
 
-# Install Zynk (from parent directory)
-pip install -e ../../
+# Install Zynk (from the bindings/python project)
+pip install -e ../../../bindings/python
 
 # Run the server
 python main.py
 ```
 
-You should see:
-```
-==================================================
-  Zynk - Kitchen Sink API
-==================================================
-  Server:     http://127.0.0.1:8000
-  Mode:       Development
-  Commands:   16
-  TypeScript: ../frontend/src/generated/api.ts
-==================================================
+The server listens on `http://127.0.0.1:8100` by default (set via `PORT` env var).
+
+### 1b. Generate the TypeScript Client
+
+Use the standalone `zynk` CLI (shipped via the Python wheel, or `cargo install zynk-cli`):
+
+```bash
+# One-shot generation
+zynk gen typescript --target python --app main:bridge \
+  --out ../frontend/src/generated
+
+# Or run it in watch mode (regenerates whenever main.py / weather.py / etc. change)
+zynk dev --app main:bridge --out ../frontend/src/generated
 ```
 
 ### 2. Start the Frontend
@@ -93,10 +96,20 @@ kitchen-sink/
 
 ## Hot Reload Demo
 
-Try editing `backend/users.py`:
+In two terminals:
+
+```bash
+# Terminal 1 — backend with Python hot reload
+cd backend && python main.py
+
+# Terminal 2 — TS regeneration on every Python edit
+cd backend && zynk dev --app main:bridge --out ../frontend/src/generated
+```
+
+Then edit `backend/users.py`:
 
 1. Add a new field to the `User` model
 2. Save the file
-3. Watch the Python server reload
-4. Watch the TypeScript get regenerated
-5. The frontend updates via HMR!
+3. The Python server reloads (its own hot-reload)
+4. `zynk dev` respawns the schema dump and regenerates the TS client
+5. The frontend updates via Vite HMR!
