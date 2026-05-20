@@ -22,7 +22,10 @@ pub fn print_api(graph: &ApiGraph) -> String {
         ));
     }
     printer.blank_line();
-    printer.line("export { initBridge };");
+    printer.line("export { initBridge, BridgeRequestError };");
+    if !type_imports.is_empty() {
+        printer.line(format!("export type {{ {} }};", type_imports.join(", ")));
+    }
 
     if !graph.models.is_empty() {
         printer.blank_line();
@@ -56,7 +59,7 @@ pub fn print_api(graph: &ApiGraph) -> String {
 }
 
 fn import_values(graph: &ApiGraph) -> Vec<&'static str> {
-    let mut imports = vec!["initBridge"];
+    let mut imports = vec!["initBridge", "BridgeRequestError"];
     if has_kind(graph, EndpointKind::Rpc) {
         imports.push("request");
     }
@@ -73,7 +76,7 @@ fn import_values(graph: &ApiGraph) -> Vec<&'static str> {
 }
 
 fn import_types(graph: &ApiGraph) -> Vec<&'static str> {
-    let mut imports = Vec::new();
+    let mut imports = vec!["BridgeError", "UploadProgressEvent"];
     if has_kind(graph, EndpointKind::Channel) {
         imports.push("BridgeChannel");
     }
@@ -130,7 +133,7 @@ fn print_rpc(printer: &mut TsPrinter, endpoint: &Endpoint, graph: &ApiGraph) {
         ));
     }
     printer.indented(|printer| {
-        let args = args_object(&endpoint.params);
+        let args = args_object(&endpoint.params, graph);
         if returns_model_like(&endpoint.returns) {
             printer.line(format!(
                 "const _r = await request<any>(\"{}\", {args});",
@@ -178,7 +181,7 @@ fn print_channel(printer: &mut TsPrinter, endpoint: &Endpoint, graph: &ApiGraph)
         printer.line(format!(
             "return createChannel<{item_ty}>(\"{}\", {});",
             endpoint.name,
-            args_object(&endpoint.params)
+            args_object(&endpoint.params, graph)
         ));
     });
     printer.line("}");
@@ -201,7 +204,7 @@ fn print_upload(printer: &mut TsPrinter, endpoint: &Endpoint, graph: &ApiGraph) 
         printer.line(format!(
             "return createUpload<{return_ty}>(\"{}\", {files_expr}, {});",
             endpoint.name,
-            args_object(&endpoint.params)
+            args_object(&endpoint.params, graph)
         ));
     });
     printer.line("}");
@@ -371,10 +374,18 @@ fn print_websocket(printer: &mut TsPrinter, endpoint: &Endpoint, graph: &ApiGrap
         for event in &endpoint.client_events {
             let method = format!("send{}", naming::to_pascal_case(&event.source_name));
             let ty = event_type(&event.ty, graph);
+            let payload = request_mapping(&event.ty, "data", graph);
             printer.blank_line();
             printer.line(format!("{method}(data: {ty}): void {{"));
             printer.indented(|printer| {
-                printer.line(format!("this.send(\"{}\", data);", event.source_name));
+                if payload == "data" {
+                    printer.line(format!("this.send(\"{}\", data);", event.source_name));
+                } else {
+                    printer.line(format!(
+                        "this.send(\"{}\", {payload} as unknown as {ty});",
+                        event.source_name
+                    ));
+                }
             });
             printer.line("}");
         }
@@ -442,7 +453,7 @@ fn param_optional(param: &Param) -> bool {
     !param.required || param.ty.optional
 }
 
-fn args_object(params: &[Param]) -> String {
+fn args_object(params: &[Param], graph: &ApiGraph) -> String {
     if params.is_empty() {
         return "{}".to_string();
     }
@@ -450,7 +461,11 @@ fn args_object(params: &[Param]) -> String {
         "{{ {} }}",
         params
             .iter()
-            .map(|param| format!("{}: args.{}", param.source_name, param.wire_name))
+            .map(|param| format!(
+                "{}: {}",
+                param.source_name,
+                request_mapping(&param.ty, &format!("args.{}", param.wire_name), graph)
+            ))
             .collect::<Vec<_>>()
             .join(", ")
     )
@@ -497,6 +512,18 @@ fn returns_model_like(ty: &TypeRef) -> bool {
     }
 }
 
+fn request_mapping(ty: &TypeRef, expr: &str, graph: &ApiGraph) -> String {
+    match ty.kind {
+        TypeKind::Model => model_request_mapping(ty.name.as_deref(), expr, graph),
+        TypeKind::Array if ty.inner.first().is_some_and(returns_model_like) => {
+            let item = ty.inner.first().expect("checked by is_some_and");
+            let item_mapping = request_mapping(item, "_item", graph);
+            format!("{expr}.map((_item) => ({item_mapping}))")
+        }
+        _ => expr.to_string(),
+    }
+}
+
 fn response_mapping(ty: &TypeRef, expr: &str, graph: &ApiGraph) -> String {
     match ty.kind {
         TypeKind::Model => model_mapping(ty.name.as_deref(), expr, graph),
@@ -509,6 +536,28 @@ fn response_mapping(ty: &TypeRef, expr: &str, graph: &ApiGraph) -> String {
     }
 }
 
+fn model_request_mapping(name: Option<&str>, expr: &str, graph: &ApiGraph) -> String {
+    let Some(name) = name else {
+        return expr.to_string();
+    };
+    let Some(model) = graph.models.get(name) else {
+        return expr.to_string();
+    };
+    let fields = model
+        .fields
+        .iter()
+        .map(|field| {
+            format!(
+                "{}: {}",
+                field.source_name,
+                request_mapping(&field.ty, &format!("{expr}.{}", field.wire_name), graph)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{{ {fields} }}")
+}
+
 fn model_mapping(name: Option<&str>, expr: &str, graph: &ApiGraph) -> String {
     let Some(name) = name else {
         return expr.to_string();
@@ -519,7 +568,13 @@ fn model_mapping(name: Option<&str>, expr: &str, graph: &ApiGraph) -> String {
     let fields = model
         .fields
         .iter()
-        .map(|field| format!("{}: {expr}.{}", field.wire_name, field.source_name))
+        .map(|field| {
+            format!(
+                "{}: {}",
+                field.wire_name,
+                response_mapping(&field.ty, &format!("{expr}.{}", field.source_name), graph)
+            )
+        })
         .collect::<Vec<_>>()
         .join(", ");
     format!("{{ {fields} }}")
@@ -739,10 +794,12 @@ mod tests {
 
         let output = print_api(&graph);
 
-        assert!(output.contains("import { initBridge, request, createChannel, createUpload, getBaseUrl } from \"./_internal\";"));
-        assert!(
-            output.contains("import type { BridgeChannel, UploadHandle } from \"./_internal\";")
-        );
+        assert!(output.contains("import { initBridge, BridgeRequestError, request, createChannel, createUpload, getBaseUrl } from \"./_internal\";"));
+        assert!(output.contains("import type { BridgeError, UploadProgressEvent, BridgeChannel, UploadHandle } from \"./_internal\";"));
+        assert!(output.contains("export { initBridge, BridgeRequestError };"));
+        assert!(output.contains(
+            "export type { BridgeError, UploadProgressEvent, BridgeChannel, UploadHandle };"
+        ));
         assert!(output.contains("/**\n * Fetch an item.\n */\nexport async function getItem(args: { itemId: number; includeMeta?: boolean }): Promise<SimpleModel>"));
         assert!(output.contains(
             "request<any>(\"get_item\", { item_id: args.itemId, include_meta: args.includeMeta })"

@@ -1,5 +1,2 @@
 node_modules
 bun.lock
-
-_internal.ts
-src/generated/api.ts
