@@ -7,6 +7,7 @@ python3 - "$ROOT" <<'PY'
 from __future__ import annotations
 
 import glob
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -55,6 +56,14 @@ CLI_FORBIDDEN_DEPS = {
     "tower-http",
     "warp",
     "zynk-axum",
+}
+
+PYTHON_FORBIDDEN_RUNTIME_DEPS = {
+    "maturin",
+    "maturin-runtime",
+    "zynk-cli",
+    "zynk-codegen",
+    "zynk-schema",
 }
 
 DEPENDENCY_TABLES = {
@@ -125,6 +134,14 @@ def iter_dependency_entries(
     return entries
 
 
+def normalized_python_dependency_name(dependency: str) -> str:
+    requirement = dependency.split(";", 1)[0].strip()
+    match = re.match(r"([A-Za-z0-9_.-]+)", requirement)
+    if match is None:
+        return ""
+    return match.group(1).lower().replace("_", "-")
+
+
 def main() -> int:
     violations: list[str] = []
     manifests = workspace_members()
@@ -171,22 +188,19 @@ def main() -> int:
     if python_manifest.exists():
         pyproject = load_toml(python_manifest)
         project = pyproject.get("project", {})
-        dependency_values: list[str] = []
+        dependencies: list[str] = []
         if isinstance(project, dict):
-            dependencies = project.get("dependencies", [])
-            if isinstance(dependencies, list):
-                dependency_values.extend(str(dep) for dep in dependencies)
-            optional = project.get("optional-dependencies", {})
-            if isinstance(optional, dict):
-                for optional_deps in optional.values():
-                    if isinstance(optional_deps, list):
-                        dependency_values.extend(str(dep) for dep in optional_deps)
+            runtime_dependencies = project.get("dependencies", [])
+            if isinstance(runtime_dependencies, list):
+                dependencies.extend(str(dep) for dep in runtime_dependencies)
 
-        for dependency in dependency_values:
-            if "zynk-codegen" in dependency or "zynk-schema" in dependency:
+        for dependency in dependencies:
+            dependency_name = normalized_python_dependency_name(dependency)
+            if dependency_name in PYTHON_FORBIDDEN_RUNTIME_DEPS:
                 violations.append(
-                    "bindings/python/pyproject.toml: Python package may not depend "
-                    f"on Rust crate '{dependency}'"
+                    "bindings/python/pyproject.toml: [project.dependencies] may not "
+                    "include Rust crate or build-tool runtime dependency "
+                    f"'{dependency}'"
                 )
 
     if violations:
