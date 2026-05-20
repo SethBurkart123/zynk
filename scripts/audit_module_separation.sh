@@ -41,6 +41,22 @@ CODEGEN_FORBIDDEN_DEPS = {
     "zynk-runtime",
 }
 
+CLI_FORBIDDEN_DEPS = {
+    "actix",
+    "actix-web",
+    "axum",
+    "hyper",
+    "poem",
+    "reqwest",
+    "rocket",
+    "salvo",
+    "tonic",
+    "tower",
+    "tower-http",
+    "warp",
+    "zynk-axum",
+}
+
 DEPENDENCY_TABLES = {
     "dependencies",
     "dev-dependencies",
@@ -140,6 +156,15 @@ def main() -> int:
                         f"{relative_path}: zynk-codegen may not depend on "
                         f"'{dependency}' in [{section}]; it must stay free of HTTP "
                         "frameworks, runtime crates, CLI crates, and specific generators"
+                    )
+
+        if crate_name == "zynk-cli":
+            for section, dependency, _value in dependency_entries:
+                if dependency in CLI_FORBIDDEN_DEPS:
+                    violations.append(
+                        f"{relative_path}: zynk-cli may not depend on "
+                        f"'{dependency}' in [{section}]; it must stay free of HTTP "
+                        "frameworks and server-binding crates"
                     )
 
     python_manifest = ROOT / "bindings/python/pyproject.toml"
