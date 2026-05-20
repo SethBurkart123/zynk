@@ -2,6 +2,7 @@
 members = [
     "crates/zynk-schema",
     "crates/zynk-codegen",
+    "crates/zynk-gen-ts",
 ]
 resolver = "2"
 
