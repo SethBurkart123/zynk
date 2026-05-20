@@ -414,7 +414,39 @@ impl SseFrame {
 
     /// Encode this frame in the exact Zynk SSE wire format.
     pub fn encode(&self) -> String {
-        format!("event: {}\ndata: {}\n\n", self.event, self.data)
+        format!(
+            "event: {}\ndata: {}\n\n",
+            self.event,
+            python_json_dumps(&self.data)
+        )
+    }
+}
+
+fn python_json_dumps(value: &Value) -> String {
+    match value {
+        Value::Array(items) => {
+            let inner = items
+                .iter()
+                .map(python_json_dumps)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{inner}]")
+        }
+        Value::Object(object) => {
+            let inner = object
+                .iter()
+                .map(|(key, value)| {
+                    format!(
+                        "{}: {}",
+                        python_json_dumps(&Value::String(key.clone())),
+                        python_json_dumps(value)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{{inner}}}")
+        }
+        _ => serde_json::to_string(value).expect("JSON value serialization cannot fail"),
     }
 }
 
@@ -548,7 +580,7 @@ mod tests {
     fn sse_frame_encodes_event_and_json_data_lines() {
         let frame = SseFrame::new("message", json!({"x": 1}));
 
-        assert_eq!(frame.encode(), "event: message\ndata: {\"x\":1}\n\n");
+        assert_eq!(frame.encode(), "event: message\ndata: {\"x\": 1}\n\n");
     }
 
     #[test]

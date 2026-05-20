@@ -4,20 +4,27 @@
 //! registers Zynk wire-contract routes on an existing Axum router.
 
 use std::collections::{BTreeMap, HashMap};
+use std::convert::Infallible;
+use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
+use futures::FutureExt;
 use serde_json::{json, Value};
+use tokio::sync::mpsc;
 use zynk_runtime::{
     inventory, EndpointKind, EndpointMeta, Handler, HandlerKey, JsonErrorEnvelope,
-    JsonResultEnvelope, ParamMeta, ZynkError, COMMAND_NOT_FOUND, EXECUTION_ERROR, INTERNAL_ERROR,
-    VALIDATION_ERROR,
+    JsonResultEnvelope, ParamMeta, SseFrame, ZynkError, COMMAND_NOT_FOUND, EXECUTION_ERROR,
+    INTERNAL_ERROR, VALIDATION_ERROR,
 };
 
 /// Axum integration point for Zynk endpoints.
@@ -29,7 +36,80 @@ pub struct ZynkBridge {
 struct BridgeState {
     endpoints: BTreeMap<String, &'static EndpointMeta>,
     handlers: HashMap<HandlerKey, Arc<dyn Handler>>,
+    channel_handlers: HashMap<HandlerKey, Arc<dyn ChannelHandler>>,
     debug: bool,
+    keepalive_interval: Duration,
+}
+
+type BoxChannelFuture = Pin<Box<dyn Future<Output = Result<(), ZynkError>> + Send>>;
+
+/// Type-erased async handler contract for channel endpoints.
+pub trait ChannelHandler: Send + Sync + 'static {
+    /// Invoke a channel handler with a JSON payload and server-side channel.
+    fn call(&self, payload: Value, channel: Channel) -> BoxChannelFuture;
+}
+
+impl<F, Fut> ChannelHandler for F
+where
+    F: Fn(Value, Channel) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<(), ZynkError>> + Send + 'static,
+{
+    fn call(&self, payload: Value, channel: Channel) -> BoxChannelFuture {
+        Box::pin(self(payload, channel))
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ChannelEvent {
+    Data(Value),
+    Close,
+}
+
+/// Server-side sender passed to channel handlers.
+#[derive(Clone, Debug)]
+pub struct Channel {
+    id: Arc<str>,
+    sender: mpsc::UnboundedSender<ChannelEvent>,
+    closed: Arc<AtomicBool>,
+}
+
+impl Channel {
+    fn new(id: String, sender: mpsc::UnboundedSender<ChannelEvent>) -> Self {
+        Self {
+            id: Arc::from(id),
+            sender,
+            closed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Return this channel's stable identifier.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Send a JSON value as a `message` SSE event.
+    pub fn send(&self, data: Value) -> Result<(), ZynkError> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(ZynkError::new(
+                EXECUTION_ERROR,
+                format!("Cannot send on closed channel {}", self.id),
+            ));
+        }
+        self.sender.send(ChannelEvent::Data(data)).map_err(|_| {
+            ZynkError::new(
+                EXECUTION_ERROR,
+                format!("Cannot send on closed channel {}", self.id),
+            )
+        })
+    }
+
+    /// Close the channel. A close frame is emitted after queued data frames.
+    pub fn close(&self) -> Result<(), ZynkError> {
+        if !self.closed.swap(true, Ordering::SeqCst) {
+            let _ = self.sender.send(ChannelEvent::Close);
+        }
+        Ok(())
+    }
 }
 
 impl ZynkBridge {
@@ -79,12 +159,34 @@ impl ZynkBridge {
         self
     }
 
+    /// Register an async channel handler for an endpoint metadata `HandlerKey`.
+    pub fn register_channel<H>(mut self, key: HandlerKey, handler: H) -> Self
+    where
+        H: ChannelHandler,
+    {
+        Arc::make_mut(&mut self.state)
+            .channel_handlers
+            .insert(key, Arc::new(handler));
+        self
+    }
+
+    /// Set the idle interval between `keepalive` SSE frames.
+    pub fn keepalive_interval(mut self, interval: Duration) -> Self {
+        Arc::make_mut(&mut self.state).keepalive_interval = interval;
+        self
+    }
+
     /// Register Zynk routes on an existing Axum router.
     pub fn configure(self, router: Router) -> Router {
-        router.route(
-            "/command/{name}",
-            post(command_route).with_state(self.state),
-        )
+        router
+            .route(
+                "/command/{name}",
+                post(command_route).with_state(self.state.clone()),
+            )
+            .route(
+                "/channel/{name}",
+                post(channel_route).with_state(self.state),
+            )
     }
 
     /// Dump the canonical `zynk-schema` API graph JSON for registered endpoints.
@@ -114,7 +216,9 @@ impl ZynkBridge {
             state: Arc::new(BridgeState {
                 endpoints,
                 handlers,
+                channel_handlers: HashMap::new(),
                 debug,
+                keepalive_interval: Duration::from_secs(30),
             }),
         }
     }
@@ -131,7 +235,9 @@ impl Clone for BridgeState {
         Self {
             endpoints: self.endpoints.clone(),
             handlers: self.handlers.clone(),
+            channel_handlers: self.channel_handlers.clone(),
             debug: self.debug,
+            keepalive_interval: self.keepalive_interval,
         }
     }
 }
@@ -143,25 +249,180 @@ fn collect_inventory_endpoints() -> BTreeMap<String, &'static EndpointMeta> {
         .collect()
 }
 
+async fn channel_route(
+    State(state): State<Arc<BridgeState>>,
+    Path(name): Path<String>,
+    body: Bytes,
+) -> Response {
+    let Some(endpoint) = state.endpoints.get(&name).copied() else {
+        return command_not_found_response(&name);
+    };
+
+    if endpoint.kind != EndpointKind::Channel {
+        return command_not_found_response(&name);
+    }
+
+    let payload = match parse_json_body(&body) {
+        Ok(payload) => payload,
+        Err(error) => return error_response(StatusCode::BAD_REQUEST, error.into_envelope()),
+    };
+
+    let payload = match validate_params(endpoint.params, payload) {
+        Ok(payload) => payload,
+        Err(error) => return error_response(StatusCode::BAD_REQUEST, error.into_envelope()),
+    };
+
+    let Some(handler_key) = endpoint.handler_key else {
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            JsonErrorEnvelope::new(
+                INTERNAL_ERROR,
+                "Registered channel is missing a handler key",
+            ),
+        );
+    };
+
+    let Some(handler) = state.channel_handlers.get(&handler_key).cloned() else {
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            JsonErrorEnvelope::new(
+                INTERNAL_ERROR,
+                format!("No handler registered for channel '{name}'"),
+            ),
+        );
+    };
+
+    let channel_id = next_channel_id();
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let channel = Channel::new(channel_id, sender);
+    let handler_channel = channel.clone();
+    let handler_task = tokio::spawn(async move {
+        match AssertUnwindSafe(handler.call(payload, handler_channel))
+            .catch_unwind()
+            .await
+        {
+            Ok(result) => result,
+            Err(panic) => Err(ZynkError::new(INTERNAL_ERROR, panic_message(panic))),
+        }
+    });
+
+    let stream = futures::stream::unfold(
+        ChannelStreamState {
+            channel,
+            receiver,
+            handler_task: Some(handler_task),
+            keepalive_interval: state.keepalive_interval,
+            emitted_terminal: false,
+        },
+        next_channel_chunk,
+    );
+
+    let mut response = Body::from_stream(stream).into_response();
+    let headers = response.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/event-stream"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    headers.insert(header::CONNECTION, HeaderValue::from_static("keep-alive"));
+    headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
+    response
+}
+
+struct ChannelStreamState {
+    channel: Channel,
+    receiver: mpsc::UnboundedReceiver<ChannelEvent>,
+    handler_task: Option<tokio::task::JoinHandle<Result<(), ZynkError>>>,
+    keepalive_interval: Duration,
+    emitted_terminal: bool,
+}
+
+async fn next_channel_chunk(
+    mut state: ChannelStreamState,
+) -> Option<(Result<Bytes, Infallible>, ChannelStreamState)> {
+    if state.emitted_terminal {
+        return None;
+    }
+
+    loop {
+        if let Some(handler_task) = state.handler_task.as_mut() {
+            tokio::select! {
+                Some(event) = state.receiver.recv() => {
+                    match event {
+                        ChannelEvent::Data(data) => {
+                            return Some((Ok(Bytes::from(SseFrame::new("message", data).encode())), state));
+                        }
+                        ChannelEvent::Close => {
+                            state.emitted_terminal = true;
+                            let frame = close_frame(state.channel.id());
+                            return Some((Ok(Bytes::from(frame)), state));
+                        }
+                    }
+                }
+                result = handler_task => {
+                    state.handler_task = None;
+                    match result {
+                        Ok(Ok(())) => {
+                            let _ = state.channel.close();
+                            continue;
+                        }
+                        Ok(Err(error)) => {
+                            state.emitted_terminal = true;
+                            let message = error.message;
+                            let frame = SseFrame::new("error", json!({ "error": message })).encode();
+                            return Some((Ok(Bytes::from(frame)), state));
+                        }
+                        Err(error) => {
+                            state.emitted_terminal = true;
+                            let frame = SseFrame::new("error", json!({ "error": error.to_string() })).encode();
+                            return Some((Ok(Bytes::from(frame)), state));
+                        }
+                    }
+                }
+                () = tokio::time::sleep(state.keepalive_interval) => {
+                    return Some((Ok(Bytes::from(SseFrame::new("keepalive", json!({})).encode())), state));
+                }
+            }
+        } else {
+            match state.receiver.recv().await {
+                Some(ChannelEvent::Data(data)) => {
+                    return Some((
+                        Ok(Bytes::from(SseFrame::new("message", data).encode())),
+                        state,
+                    ));
+                }
+                Some(ChannelEvent::Close) => {
+                    state.emitted_terminal = true;
+                    let frame = close_frame(state.channel.id());
+                    return Some((Ok(Bytes::from(frame)), state));
+                }
+                None => return None,
+            }
+        }
+    }
+}
+
+fn close_frame(channel_id: &str) -> String {
+    SseFrame::new("close", json!({ "channelId": channel_id })).encode()
+}
+
+static NEXT_CHANNEL_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_channel_id() -> String {
+    format!("channel-{}", NEXT_CHANNEL_ID.fetch_add(1, Ordering::SeqCst))
+}
+
 async fn command_route(
     State(state): State<Arc<BridgeState>>,
     Path(name): Path<String>,
     body: Bytes,
 ) -> Response {
     let Some(endpoint) = state.endpoints.get(&name).copied() else {
-        return error_response(
-            StatusCode::NOT_FOUND,
-            JsonErrorEnvelope::new(COMMAND_NOT_FOUND, format!("Command '{name}' not found"))
-                .with_details(json!({ "command": name })),
-        );
+        return command_not_found_response(&name);
     };
 
     if endpoint.kind != EndpointKind::Rpc {
-        return error_response(
-            StatusCode::NOT_FOUND,
-            JsonErrorEnvelope::new(COMMAND_NOT_FOUND, format!("Command '{name}' not found"))
-                .with_details(json!({ "command": name })),
-        );
+        return command_not_found_response(&name);
     }
 
     let payload = match parse_json_body(&body) {
@@ -249,6 +510,14 @@ fn status_for_error(code: &'static str) -> StatusCode {
         EXECUTION_ERROR | INTERNAL_ERROR => StatusCode::INTERNAL_SERVER_ERROR,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
+}
+
+fn command_not_found_response(name: &str) -> Response {
+    error_response(
+        StatusCode::NOT_FOUND,
+        JsonErrorEnvelope::new(COMMAND_NOT_FOUND, format!("Command '{name}' not found"))
+            .with_details(json!({ "command": name })),
+    )
 }
 
 fn error_response(status: StatusCode, error: JsonErrorEnvelope) -> Response {
