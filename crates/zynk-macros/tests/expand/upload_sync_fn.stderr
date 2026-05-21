@@ -1,0 +1,5 @@
+error: #[zynk::upload] handlers must be async functions
+ --> tests/expand/upload_sync_fn.rs:6:4
+  |
+6 | fn upload_avatar(file: UploadFile) -> String {
+  |    ^^^^^^^^^^^^^

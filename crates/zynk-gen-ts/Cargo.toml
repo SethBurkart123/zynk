@@ -1,0 +1,18 @@
+[package]
+name = "zynk-gen-ts"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Plain TypeScript generator for Zynk API graphs"
+readme = "README.md"
+keywords = ["zynk", "typescript", "codegen", "generator"]
+categories = ["development-tools", "web-programming"]
+
+[dependencies]
+zynk-schema = { version = "0.1.0", path = "../zynk-schema" }
+zynk-codegen = { version = "0.1.0", path = "../zynk-codegen" }
+
+[dev-dependencies]
+serde_json.workspace = true

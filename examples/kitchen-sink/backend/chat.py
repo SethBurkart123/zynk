@@ -97,6 +97,8 @@ async def chat(ws: WebSocket[ServerEvents, ClientEvents]) -> None:
     @ws.on("join")
     async def on_join(data: UserJoined):
         nonlocal current_user
+        if data.user == "__panic__":
+            raise RuntimeError("super secret stack info")
         current_user = data.user
         _connected_users.add(data.user)
 
@@ -125,6 +127,8 @@ async def chat(ws: WebSocket[ServerEvents, ClientEvents]) -> None:
 
     @ws.on("chat_message")
     async def on_chat(data: ChatMessage):
+        if data.text == "__panic__":
+            raise RuntimeError("super secret stack info")
         await broadcast(
             "chat_message",
             ChatMessage(

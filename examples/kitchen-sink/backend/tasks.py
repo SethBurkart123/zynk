@@ -5,7 +5,8 @@ Demonstrates nested models and more complex data structures.
 """
 
 from datetime import datetime
-from enum import Enum
+from enum import Enum, IntEnum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -26,6 +27,13 @@ class TaskStatus(str, Enum):
     IN_PROGRESS = "in_progress"
     DONE = "done"
     CANCELLED = "cancelled"
+
+
+class NumericTaskStatus(IntEnum):
+    """Numeric status codes for wire-fidelity checks."""
+    TODO = 1
+    IN_PROGRESS = 2
+    DONE = 3
 
 
 class TaskLabel(BaseModel):
@@ -56,6 +64,14 @@ class TaskStats(BaseModel):
     done: int
     cancelled: int
     by_priority: dict[str, int]
+
+
+class TaskWireCheck(BaseModel):
+    """A literal-bearing payload used to verify wire fidelity."""
+    kind: Literal["task_wire_check"]
+    priority: TaskPriority
+    status: TaskStatus
+    numeric_status: NumericTaskStatus
 
 
 # In-memory storage
@@ -229,6 +245,23 @@ async def delete_task(task_id: int) -> bool:
         del _tasks_db[task_id]
         return True
     return False
+
+
+@command
+async def echo_task_wire_check(payload: TaskWireCheck) -> TaskWireCheck:
+    """Echo a literal and enum payload without coercing wire values."""
+    return payload
+
+
+@command
+async def get_task_wire_check() -> TaskWireCheck:
+    """Return a canonical literal and enum payload."""
+    return TaskWireCheck(
+        kind="task_wire_check",
+        priority=TaskPriority.URGENT,
+        status=TaskStatus.IN_PROGRESS,
+        numeric_status=NumericTaskStatus.IN_PROGRESS,
+    )
 
 
 @command

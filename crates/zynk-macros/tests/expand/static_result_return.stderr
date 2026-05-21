@@ -1,0 +1,5 @@
+error: #[zynk::static_file] functions must return StaticFile
+ --> tests/expand/static_result_return.rs:6:23
+  |
+6 | fn avatar(id: i64) -> Result<StaticFile, String> {
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^

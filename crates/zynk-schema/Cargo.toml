@@ -1,0 +1,15 @@
+[package]
+name = "zynk-schema"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Canonical in-memory schema representation for Zynk bindings and generators"
+readme = "README.md"
+keywords = ["zynk", "schema", "serde", "codegen"]
+categories = ["development-tools", "data-structures"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true

@@ -47,6 +47,8 @@ async def get_user(user_id: int) -> User:
 
     Raises an error if the user doesn't exist.
     """
+    if user_id == -500:
+        raise RuntimeError("super secret stack info")
     if user_id not in _users_db:
         raise ValueError(f"User with ID {user_id} not found")
     return _users_db[user_id]

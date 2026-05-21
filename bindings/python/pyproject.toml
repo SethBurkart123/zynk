@@ -1,0 +1,113 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zynk"
+version = "0.1.0"
+description = "Python server runtime for Zynk. Pair with the standalone `zynk` CLI (zynk-cli) for type-safe TypeScript client generation."
+readme = {text = "# Zynk\n\nPython server runtime. Use the bundled `zynk` CLI binary (or `cargo install zynk-cli`) to generate TypeScript clients from your Bridge.", content-type = "text/markdown"}
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "SethBurkart123"}
+]
+keywords = [
+    "typescript",
+    "fastapi",
+    "code-generation",
+    "type-safety",
+    "bridge",
+    "frontend",
+    "backend",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Framework :: FastAPI",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "pydantic>=2.0.0",
+    "python-multipart>=0.0.20",
+    "rich>=14.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.24.0",
+    "black>=23.0.0",
+    "ruff>=0.0.280",
+    "mypy>=1.4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/SethBurkart123/zynk"
+Documentation = "https://github.com/SethBurkart123/zynk#readme"
+Repository = "https://github.com/SethBurkart123/zynk"
+
+[project.scripts]
+zynk = "zynk._cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["zynk*"]
+
+[tool.setuptools.package-data]
+zynk = ["bin/zynk", "bin/zynk.exe"]
+
+[tool.cibuildwheel]
+build = "cp*-macosx_arm64 cp*-macosx_x86_64 cp*-manylinux_x86_64 cp*-manylinux_aarch64 cp*-win_amd64"
+skip = "cp36-* cp37-* cp38-* cp39-* pp*"
+before-build = "python -c \"import os; assert os.environ.get('ZYNK_BUNDLE_CLI') == '1'\""
+test-command = "zynk --version && python -c \"from zynk import Bridge; Bridge()\""
+
+[tool.cibuildwheel.environment]
+ZYNK_BUNDLE_CLI = "1"
+
+[tool.cibuildwheel.macos]
+archs = ["arm64", "x86_64"]
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64", "aarch64"]
+
+[tool.cibuildwheel.windows]
+archs = ["AMD64"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Side-effect imports for command registration
+"examples/kitchen-sink/backend/main.py" = ["F401"]
+"examples/kitchen-sink/backend/generate_ts.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

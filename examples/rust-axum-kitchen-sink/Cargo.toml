@@ -1,0 +1,35 @@
+[package]
+name = "rust-axum-kitchen-sink"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[lib]
+name = "rust_axum_kitchen_sink"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rust-axum-kitchen-sink"
+path = "src/main.rs"
+
+[dependencies]
+zynk-runtime = { path = "../../crates/zynk-runtime" }
+zynk = { package = "zynk-macros", path = "../../crates/zynk-macros" }
+zynk-axum = { path = "../../crates/zynk-axum" }
+zynk-schema = { path = "../../crates/zynk-schema" }
+axum = { version = "0.8", features = ["multipart", "ws"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "time", "sync"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.22"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "stream"] }
+tokio-tungstenite = "0.27"
+futures-util = "0.3"

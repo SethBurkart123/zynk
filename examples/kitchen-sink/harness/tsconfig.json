@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "lib": ["ES2022", "DOM"],
+    "types": ["bun"]
+  },
+  "include": ["index.ts", "effect.ts", "index.test.ts", "../frontend/src/generated/**/*.ts", "../frontend/src/generated-effect/**/*.ts", "generated/**/*.ts"]
+}

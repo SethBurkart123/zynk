@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Script to generate the TypeScript client for the kitchen sink example.
-"""
+"""Script to generate the TypeScript client for the kitchen sink example via the zynk CLI."""
 
 import os
 import sys
@@ -9,15 +7,22 @@ import sys
 # Add the backend directory to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import the command modules to register their commands
-import chat
-import tasks
-import users
-import weather
-
-# Generate the TypeScript
-from zynk import generate_typescript
+import subprocess
 
 output_path = "../frontend/src/generated/api.ts"
-generate_typescript(output_path)
+subprocess.run(
+    [
+        "zynk",
+        "gen",
+        "typescript",
+        "--target",
+        "python",
+        "--out",
+        output_path,
+        "--app",
+        "main:app",
+    ],
+    cwd=os.path.dirname(__file__),
+    check=True,
+)
 print(f"Generated TypeScript client: {output_path}")

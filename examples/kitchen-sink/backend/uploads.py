@@ -8,10 +8,11 @@ import base64
 import hashlib
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 from pydantic import BaseModel
 
-from zynk import UploadFile, upload
+from zynk import StaticFile, UploadFile, static, upload
 
 
 class FileInfo(BaseModel):
@@ -46,6 +47,13 @@ class DocumentUploadResult(BaseModel):
 
 # In-memory storage for demo purposes
 _uploaded_files: dict[str, bytes] = {}
+_STATIC_DIR = Path(__file__).parent / "static_assets"
+
+
+@static
+async def download_sample(filename: str = "sample.txt") -> StaticFile:
+    """Download a static sample file by filename."""
+    return StaticFile.from_directory(_STATIC_DIR, filename, content_type="text/plain")
 
 
 @upload

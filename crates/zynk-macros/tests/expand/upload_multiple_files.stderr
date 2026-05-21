@@ -1,0 +1,5 @@
+error: #[zynk::upload] supports exactly one UploadFile or Vec<UploadFile> parameter
+ --> tests/expand/upload_multiple_files.rs:6:43
+  |
+6 | async fn upload_pair(primary: UploadFile, secondary: Vec<UploadFile>) -> String {
+  |                                           ^^^^^^^^^

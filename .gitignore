@@ -2,3 +2,8 @@ __pycache__
 *.egg-info
 .venv
 uv.lock
+target/
+Cargo.lock
+bindings/python/build/
+bindings/python/dist/
+/build/

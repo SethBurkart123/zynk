@@ -1,0 +1,17 @@
+name: Module separation audit
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - rust
+
+jobs:
+  audit:
+    name: Audit Rust crate module separation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run module separation audit
+        run: bash scripts/audit_module_separation.sh

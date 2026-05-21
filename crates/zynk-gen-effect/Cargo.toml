@@ -1,0 +1,16 @@
+[package]
+name = "zynk-gen-effect"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Effect-TS generator for Zynk API graphs"
+readme = "README.md"
+keywords = ["zynk", "effect", "typescript", "codegen"]
+categories = ["development-tools", "web-programming"]
+
+[dependencies]
+zynk-schema = { version = "0.1.0", path = "../zynk-schema" }
+zynk-codegen = { version = "0.1.0", path = "../zynk-codegen" }
+serde_json.workspace = true
