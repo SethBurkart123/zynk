@@ -136,6 +136,7 @@ fn expand_endpoint(
             }
         }
         EndpointSurface::Upload(config) => {
+            validate_upload_async(&function)?;
             let upload = upload_parts_from_signature(&function)?;
             let params_tokens = upload.params.iter().map(ParamTokens::to_tokens);
             let file_param = upload.file_param;
@@ -331,6 +332,17 @@ fn reject_methods(function: &ItemFn) -> syn::Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_upload_async(function: &ItemFn) -> syn::Result<()> {
+    if function.sig.asyncness.is_some() {
+        Ok(())
+    } else {
+        Err(syn::Error::new(
+            function.sig.ident.span(),
+            "#[zynk::upload] handlers must be async functions",
+        ))
+    }
 }
 
 struct ParamTokens {

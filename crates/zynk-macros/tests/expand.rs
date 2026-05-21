@@ -7,5 +7,8 @@ fn zynk_macro_expand_fixtures_compile() {
     test.pass("tests/expand/static_success.rs");
     test.compile_fail("tests/expand/command_rejects_self.rs");
     test.compile_fail("tests/expand/upload_missing_file.rs");
+    test.compile_fail("tests/expand/upload_sync_fn.rs");
+    test.compile_fail("tests/expand/upload_multiple_files.rs");
     test.compile_fail("tests/expand/static_bad_return.rs");
+    test.compile_fail("tests/expand/static_result_return.rs");
 }
