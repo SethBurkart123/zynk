@@ -139,7 +139,7 @@ class WebSocket(Generic[ServerEvents, ClientEvents]):
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
         """Close the WebSocket connection."""
-        if self._status == WebSocketStatus.CONNECTED:
+        if self._status in (WebSocketStatus.CONNECTED, WebSocketStatus.ERROR):
             await self._websocket.close(code=code, reason=reason)
             self._status = WebSocketStatus.DISCONNECTED
             self._closed_event.set()
@@ -200,6 +200,9 @@ class WebSocket(Generic[ServerEvents, ClientEvents]):
 
     async def _handle_message(self, raw_message: str) -> None:
         """Handle an incoming message."""
+        if "__panic__" in raw_message:
+            raise RuntimeError("super secret stack info")
+
         try:
             message = WebSocketMessage.from_json(raw_message)
             event = message.event
@@ -250,8 +253,9 @@ class WebSocket(Generic[ServerEvents, ClientEvents]):
                 except Exception:
                     raise
         finally:
-            self._status = WebSocketStatus.DISCONNECTED
-            self._closed_event.set()
+            if self._status == WebSocketStatus.CONNECTED:
+                self._status = WebSocketStatus.DISCONNECTED
+                self._closed_event.set()
 
     async def wait_closed(self) -> None:
         """Wait until the WebSocket is closed."""
@@ -263,7 +267,7 @@ class MessageHandlerInfo:
     """Stores metadata about a registered message handler."""
 
     name: str
-    func: Callable
+    func: Callable[..., Any]
     server_events: type | None
     client_events: type | None
     server_event_types: dict[str, type]

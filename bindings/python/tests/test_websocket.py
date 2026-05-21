@@ -3,11 +3,13 @@ Tests for WebSocket support and @message decorator.
 """
 
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import BaseModel
+from starlette.websockets import WebSocketDisconnect
 
-from zynk import message, WebSocket, get_registry
+from zynk import Bridge, WebSocket, get_registry, message
 from zynk.registry import CommandRegistry
-from zynk.websocket import _extract_event_types, MessageHandlerInfo
+from zynk.websocket import _extract_event_types
 
 
 # Test models
@@ -193,3 +195,62 @@ class TestGetAllMessageHandlers:
         assert len(handlers) == 2
         assert "handler1" in handlers
         assert "handler2" in handlers
+
+
+class TestWebSocketRuntime:
+    """Test runtime WebSocket behavior through the FastAPI route."""
+
+    def test_first_client_frame_reaches_registered_handler(self):
+        """A normal first client frame is not consumed before handler registration."""
+
+        @message
+        async def first_frame(ws: WebSocket[ServerEvents, ClientEvents]) -> None:
+            @ws.on("chat_message")
+            async def on_chat(data: ChatMessage) -> None:
+                await ws.send("chat_message", data)
+                await ws.close()
+
+            await ws.listen()
+
+        bridge = Bridge(host="127.0.0.1", port=8000)
+        with TestClient(bridge.app) as client:
+            with client.websocket_connect("/ws/first_frame") as websocket:
+                websocket.send_json(
+                    {
+                        "event": "chat_message",
+                        "data": {"user": "alice", "text": "hello"},
+                    }
+                )
+
+                assert websocket.receive_json() == {
+                    "event": "chat_message",
+                    "data": {"user": "alice", "text": "hello"},
+                }
+
+    def test_panic_event_still_closes_with_1011(self):
+        """The special __panic__ test path still maps handler failure to 1011."""
+
+        @message
+        async def panic_ws(ws: WebSocket[ServerEvents, ClientEvents]) -> None:
+            @ws.on("chat_message")
+            async def on_chat(data: ChatMessage) -> None:
+                if data.text == "__panic__":
+                    raise RuntimeError("super secret stack info")
+                await ws.send("chat_message", data)
+
+            await ws.listen()
+
+        bridge = Bridge(host="127.0.0.1", port=8000)
+        with TestClient(bridge.app) as client:
+            with client.websocket_connect("/ws/panic_ws") as websocket:
+                websocket.send_json(
+                    {
+                        "event": "chat_message",
+                        "data": {"user": "alice", "text": "__panic__"},
+                    }
+                )
+
+                with pytest.raises(WebSocketDisconnect) as exc_info:
+                    websocket.receive_text()
+
+        assert exc_info.value.code == 1011

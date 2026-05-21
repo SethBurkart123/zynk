@@ -54,7 +54,7 @@ from .runtime.dispatch import (
 )
 from .static import StaticFile, StaticInfo
 from .upload import UploadFile, UploadInfo
-from .websocket import WebSocket
+from .websocket import WebSocket, WebSocketStatus
 
 logger = logging.getLogger(__name__)
 
@@ -335,17 +335,10 @@ class Bridge:
 
             try:
                 await ws.accept()
-                try:
-                    first_message = await asyncio.wait_for(websocket.receive_text(), timeout=0.05)
-                except TimeoutError:
-                    first_message = None
-                if first_message is not None:
-                    if "__panic__" in first_message:
-                        raise RuntimeError("super secret stack info")
-                    await ws._handle_message(first_message)
                 await handler.func(ws)
             except Exception as e:
                 logger.exception(f"WebSocket handler '{handler_name}' failed")
+                ws._status = WebSocketStatus.ERROR
                 await ws.close(code=1011, reason=str(e))
 
         @self.app.post("/upload/{handler_name}")
