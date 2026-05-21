@@ -621,6 +621,7 @@ async fn channel_route(
             receiver,
             handler_task: Some(handler_task),
             keepalive_interval: state.keepalive_interval,
+            pending_error: None,
             emitted_terminal: false,
         },
         next_channel_chunk,
@@ -643,6 +644,7 @@ struct ChannelStreamState {
     receiver: mpsc::UnboundedReceiver<ChannelEvent>,
     handler_task: Option<tokio::task::JoinHandle<Result<(), ZynkError>>>,
     keepalive_interval: Duration,
+    pending_error: Option<String>,
     emitted_terminal: bool,
 }
 
@@ -676,15 +678,12 @@ async fn next_channel_chunk(
                             continue;
                         }
                         Ok(Err(error)) => {
-                            state.emitted_terminal = true;
-                            let message = error.message;
-                            let frame = SseFrame::new("error", json!({ "error": message })).encode();
-                            return Some((Ok(Bytes::from(frame)), state));
+                            state.pending_error = Some(error.message);
+                            continue;
                         }
                         Err(error) => {
-                            state.emitted_terminal = true;
-                            let frame = SseFrame::new("error", json!({ "error": error.to_string() })).encode();
-                            return Some((Ok(Bytes::from(frame)), state));
+                            state.pending_error = Some(error.to_string());
+                            continue;
                         }
                     }
                 }
@@ -692,6 +691,24 @@ async fn next_channel_chunk(
                     return Some((Ok(Bytes::from(SseFrame::new("keepalive", json!({})).encode())), state));
                 }
             }
+        } else if let Ok(event) = state.receiver.try_recv() {
+            match event {
+                ChannelEvent::Data(data) => {
+                    return Some((
+                        Ok(Bytes::from(SseFrame::new("message", data).encode())),
+                        state,
+                    ));
+                }
+                ChannelEvent::Close => {
+                    state.emitted_terminal = true;
+                    let frame = close_frame(state.channel.id());
+                    return Some((Ok(Bytes::from(frame)), state));
+                }
+            }
+        } else if let Some(message) = state.pending_error.take() {
+            state.emitted_terminal = true;
+            let frame = SseFrame::new("error", json!({ "error": message })).encode();
+            return Some((Ok(Bytes::from(frame)), state));
         } else {
             match state.receiver.recv().await {
                 Some(ChannelEvent::Data(data)) => {

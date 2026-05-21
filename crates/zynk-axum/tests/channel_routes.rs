@@ -117,7 +117,8 @@ fn test_bridge() -> zynk_axum::ZynkBridge {
         )
         .register_channel(
             HandlerKey("channel_routes::error_channel"),
-            |_payload: Value, _channel: zynk_axum::Channel| async move {
+            |_payload: Value, channel: zynk_axum::Channel| async move {
+                channel.send(json!("before failure"))?;
                 Err(ZynkError::new(EXECUTION_ERROR, "handler failed"))
             },
         )
@@ -192,7 +193,7 @@ async fn channel_route_emits_keepalives_during_idle_periods() {
 }
 
 #[tokio::test]
-async fn channel_route_error_event_terminates_stream_without_close_frame() {
+async fn channel_route_error_event_flushes_queued_data_then_terminates_without_close_frame() {
     let router = test_bridge().configure(Router::new());
 
     let response = post(router, "/channel/error_channel", "{}").await;
@@ -201,7 +202,12 @@ async fn channel_route_error_event_terminates_stream_without_close_frame() {
 
     assert_eq!(
         body,
-        "event: error\ndata: {\"error\": \"handler failed\"}\n\n"
+        concat!(
+            "event: message\n",
+            "data: \"before failure\"\n\n",
+            "event: error\n",
+            "data: {\"error\": \"handler failed\"}\n\n",
+        ),
     );
     assert!(!body.contains("event: close"));
 }

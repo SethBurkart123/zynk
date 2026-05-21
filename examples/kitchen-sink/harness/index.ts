@@ -256,6 +256,25 @@ async function stopServer(server: ServerProcess): Promise<void> {
   await Promise.allSettled([server.stdout, server.stderr]);
 }
 
+async function stopServers(servers: ServerProcess[]): Promise<void> {
+  await Promise.allSettled([...servers].reverse().map((server) => stopServer(server)));
+  servers.length = 0;
+}
+
+async function restartServersForFreshParity(servers: ServerProcess[]): Promise<void> {
+  // --mode=all runs stateful WebSocket suites before byte parity. Restart both
+  // servers here so parity observes the same fresh process state as --mode=parity
+  // instead of comparing cumulative counters such as connected_users.
+  await appendLog("harness.log", "[RESTART] restarting Python and Rust servers before cross-server byte parity\n");
+  await stopServers(servers);
+  servers.push(await startPythonServer(PYTHON_BASE_URL));
+  servers.push(await startRustServer(RUST_BASE_URL));
+  await Promise.all([
+    waitForHealth(PYTHON_BASE_URL, "python-parity-fresh"),
+    waitForHealth(RUST_BASE_URL, "rust-parity-fresh"),
+  ]);
+}
+
 async function waitForHealth(baseUrl: string, suite: string): Promise<void> {
   const started = Date.now();
   let lastError = "server did not respond";
@@ -994,6 +1013,7 @@ async function main(): Promise<void> {
         await runSuite({ label: "python", baseUrl: PYTHON_BASE_URL, client: pythonClient! });
         await runSuite({ label: "rust", baseUrl: RUST_BASE_URL, client: rustClient! });
         await runSuite({ label: "cross-python-client-on-rust", baseUrl: RUST_BASE_URL, client: pythonClient! });
+        await restartServersForFreshParity(servers);
         await step("cross-server byte parity: channel/ws/upload", testCrossServerParity);
         await step("cross-server error envelope parity", testErrorEnvelopeParity);
         await step("cross-server SSE error termination", testSseErrorTermination);
@@ -1007,7 +1027,7 @@ async function main(): Promise<void> {
     await Bun.write(`${LOG_DIR}/summary.json`, `${JSON.stringify({ mode, pythonBaseUrl: PYTHON_BASE_URL, rustBaseUrl: RUST_BASE_URL, testResults, evidenceCount: evidence.length }, null, 2)}\n`);
     console.log(`ALL PASSED (${testResults.length}/${testResults.length}); logs: ${LOG_DIR}`);
   } finally {
-    await Promise.allSettled(servers.reverse().map((server) => stopServer(server)));
+    await stopServers(servers);
   }
 }
 
