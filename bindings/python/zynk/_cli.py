@@ -24,8 +24,26 @@ def _platform_label() -> str:
     return f"{sys.platform}-{machine}"
 
 
+def _find_system_binary() -> Path | None:
+    path_dirs = os.get_exec_path()
+    for d in path_dirs:
+        for name in _BINARY_NAMES:
+            candidate = Path(d) / name
+            if not candidate.is_file():
+                continue
+            # Skip Python entry-point shims (text scripts); we want a real binary.
+            try:
+                with open(candidate, "rb") as f:
+                    if f.read(2) == b"#!":
+                        continue
+            except OSError:
+                continue
+            return candidate
+    return None
+
+
 def main(argv: Sequence[str] | None = None) -> NoReturn:
-    binary = _bundled_binary_path()
+    binary = _bundled_binary_path() or _find_system_binary()
     if binary is None:
         print(
             "No prebuilt zynk binary for "

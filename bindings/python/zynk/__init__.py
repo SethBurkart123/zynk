@@ -97,7 +97,7 @@ For static file serving:
         return StaticFile(path=path)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "Zynk Team"
 
 # Core exports

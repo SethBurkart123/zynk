@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zynk"
-version = "0.1.0"
+version = "0.1.1"
 description = "Python server runtime for Zynk. Pair with the standalone `zynk` CLI (zynk-cli) for type-safe TypeScript client generation."
-readme = {text = "# Zynk\n\nPython server runtime. Use the bundled `zynk` CLI binary (or `cargo install zynk-cli`) to generate TypeScript clients from your Bridge.", content-type = "text/markdown"}
+readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [

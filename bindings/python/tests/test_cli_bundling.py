@@ -46,6 +46,7 @@ def test_cli_shim_prints_actionable_guidance_without_bundled_binary(
     from zynk import _cli
 
     monkeypatch.setattr(_cli, "_bundled_binary_path", lambda: None)
+    monkeypatch.setattr(_cli, "_find_system_binary", lambda: None)
 
     with pytest.raises(SystemExit) as exc_info:
         _cli.main(["gen", "typescript"])
@@ -55,6 +56,34 @@ def test_cli_shim_prints_actionable_guidance_without_bundled_binary(
     assert "No prebuilt zynk binary" in captured.err
     assert sys.platform in captured.err
     assert "cargo install zynk-cli" in captured.err
+
+
+def test_cli_shim_falls_back_to_system_binary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from zynk import _cli
+
+    binary_name = "zynk.exe" if os.name == "nt" else "zynk"
+    system_bin = tmp_path / binary_name
+    # Write a real binary header (not a #! shim) so the fallback picks it up.
+    system_bin.write_bytes(b"\xcf\xfa\xed\xfe" + b"\x00" * 100)
+    system_bin.chmod(system_bin.stat().st_mode | stat.S_IXUSR)
+
+    exec_calls: list[tuple[str, list[str]]] = []
+
+    def fake_execv(path: str, args: list[str]) -> NoReturn:
+        exec_calls.append((path, args))
+        raise SystemExit(42)
+
+    monkeypatch.setattr(_cli, "_bundled_binary_path", lambda: None)
+    monkeypatch.setattr(_cli, "_find_system_binary", lambda: system_bin)
+    monkeypatch.setattr(os, "execv", fake_execv)
+
+    with pytest.raises(SystemExit) as exc_info:
+        _cli.main(["--version"])
+
+    assert exc_info.value.code == 42
+    assert exec_calls == [(str(system_bin), [str(system_bin), "--version"])]
 
 
 def test_pyproject_aligns_version_entrypoint_and_cibuildwheel_targets() -> None:
