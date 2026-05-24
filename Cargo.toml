@@ -14,8 +14,11 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
+rust-version = "1.75"
 license = "MIT"
 repository = "https://github.com/SethBurkart123/zynk"
+homepage = "https://github.com/SethBurkart123/zynk"
+documentation = "https://docs.rs/zynk-schema"
 authors = ["SethBurkart123"]
 
 [workspace.dependencies]

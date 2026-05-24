@@ -2,10 +2,14 @@
 name = "zynk-axum"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/zynk-axum"
 authors.workspace = true
 description = "Axum server binding for Zynk Rust endpoints"
+readme = "README.md"
 keywords = ["zynk", "axum", "rpc", "server"]
 categories = ["web-programming::http-server"]
 

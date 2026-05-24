@@ -2,8 +2,11 @@
 name = "zynk-gen-effect"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/zynk-gen-effect"
 authors.workspace = true
 description = "Effect-TS generator for Zynk API graphs"
 readme = "README.md"
