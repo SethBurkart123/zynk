@@ -1,6 +1,6 @@
 [package]
 name = "zynk-macros"
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,7 +17,7 @@ categories = ["web-programming"]
 proc-macro = true
 
 [dependencies]
-zynk-runtime = { version = "0.1.1", path = "../zynk-runtime" }
+zynk-runtime = { version = "0.1.2", path = "../zynk-runtime" }
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }

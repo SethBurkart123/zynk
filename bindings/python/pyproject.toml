@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zynk"
-version = "0.1.1"
+version = "0.1.2"
 description = "Python server runtime for Zynk. Pair with the standalone `zynk` CLI (zynk-cli) for type-safe TypeScript client generation."
 readme = "README.md"
 license = {text = "MIT"}

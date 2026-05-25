@@ -298,21 +298,6 @@ const safeJsonParse = (
   }
 }
 
-const camelToSnake = (key: string): string =>
-  key.replace(/[A-Z]/g, (m, i) => (i === 0 ? m.toLowerCase() : `_${m.toLowerCase()}`))
-
-const toSnakeCaseKeys = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(toSnakeCaseKeys)
-  if (value !== null && typeof value === "object") {
-    const out: Record<string, unknown> = {}
-    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
-      out[camelToSnake(key)] = toSnakeCaseKeys(v)
-    }
-    return out
-  }
-  return value
-}
-
 // ---------------------------------------------------------------------------
 // RPC calls
 // ---------------------------------------------------------------------------
@@ -342,7 +327,7 @@ export const callCommand = <A, I>(
               options?.headers,
               "application/json",
             ),
-            body: JSON.stringify(toSnakeCaseKeys(args) ?? {}),
+            body: JSON.stringify(args ?? {}),
             signal: controller.signal,
           }),
         catch: (cause) => wrapNetworkError(url, cause),
@@ -427,7 +412,7 @@ export const callChannel = <A, I>(
                   options?.headers,
                   "application/json",
                 ),
-                body: JSON.stringify(toSnakeCaseKeys(args) ?? {}),
+                body: JSON.stringify(args ?? {}),
                 signal: controller.signal,
               }),
             catch: (cause) => {
@@ -646,7 +631,7 @@ export const callUpload = <A, I>(
       for (const file of files) {
         formData.append("files", file)
       }
-      formData.append("_args", JSON.stringify(toSnakeCaseKeys(args) ?? {}))
+      formData.append("_args", JSON.stringify(args ?? {}))
 
       if (options?.onProgress) {
         xhr.upload.onprogress = (event) => {

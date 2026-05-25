@@ -229,7 +229,7 @@ export const deleteUser = (args: { userId: number }, options?: CallOptions): Eff
  * Echo a literal and enum payload without coercing wire values.
  */
 export const echoTaskWireCheck = (args: { payload: TaskWireCheck }, options?: CallOptions): Effect.Effect<TaskWireCheck, ZynkError, ZynkClient> =>
-  callCommand("echo_task_wire_check", { payload: args.payload }, TaskWireCheck, options)
+  callCommand("echo_task_wire_check", { payload: Schema.encodeUnknownSync(TaskWireCheck)(args.payload) }, TaskWireCheck, options)
 
 /**
  * Get weather forecast for a city.

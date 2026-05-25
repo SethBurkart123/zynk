@@ -1,6 +1,6 @@
 [package]
 name = "zynk-gen-ts"
-version = "0.1.1"
+version = "0.1.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -14,8 +14,8 @@ keywords = ["zynk", "typescript", "codegen", "generator"]
 categories = ["development-tools", "web-programming"]
 
 [dependencies]
-zynk-schema = { version = "0.1.1", path = "../zynk-schema" }
-zynk-codegen = { version = "0.1.1", path = "../zynk-codegen" }
+zynk-schema = { version = "0.1.2", path = "../zynk-schema" }
+zynk-codegen = { version = "0.1.2", path = "../zynk-codegen" }
 
 [dev-dependencies]
 serde_json.workspace = true

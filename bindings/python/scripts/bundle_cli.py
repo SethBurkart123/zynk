@@ -22,21 +22,46 @@ def _binary_name() -> str:
     return "zynk.exe" if sys.platform == "win32" else "zynk"
 
 
+def _truthy(value: str | None) -> bool:
+    return (value or "").lower() in {"1", "true", "yes", "on"}
+
+
 def main() -> None:
-    if os.environ.get("ZYNK_BUNDLE_CLI") not in {"1", "true", "TRUE", "yes", "YES"}:
-        print("ZYNK_BUNDLE_CLI is not enabled; building a pure Python wheel")
+    repo_root = _repo_root()
+    binary = repo_root / "target" / "release" / _binary_name()
+    explicit = _truthy(os.environ.get("ZYNK_BUNDLE_CLI"))
+    skip = _truthy(os.environ.get("ZYNK_SKIP_BUNDLE_CLI"))
+
+    if skip:
+        print("ZYNK_SKIP_BUNDLE_CLI is set; building a pure Python wheel")
         return
 
-    repo_root = _repo_root()
-    subprocess.run(
-        ["cargo", "build", "--release", "-p", "zynk-cli"],
-        cwd=repo_root,
-        check=True,
-    )
+    # Build the CLI when the caller asks for it, or when we have no local binary
+    # to copy yet. If a pre-built binary already exists we reuse it so iterative
+    # `uv sync` cycles don't pay the cargo-build cost.
+    if explicit or not binary.is_file():
+        try:
+            subprocess.run(
+                ["cargo", "build", "--release", "-p", "zynk-cli"],
+                cwd=repo_root,
+                check=True,
+            )
+        except FileNotFoundError:
+            if explicit:
+                raise
+            print("cargo not found; building a pure Python wheel")
+            return
+        except subprocess.CalledProcessError:
+            if explicit:
+                raise
+            print("cargo build failed; building a pure Python wheel")
+            return
 
-    binary = repo_root / "target" / "release" / _binary_name()
     if not binary.is_file():
-        raise FileNotFoundError(f"expected zynk CLI binary at {binary}")
+        if explicit:
+            raise FileNotFoundError(f"expected zynk CLI binary at {binary}")
+        print(f"no zynk CLI binary at {binary}; building a pure Python wheel")
+        return
 
     configured_destination = os.environ.get("ZYNK_CLI_DESTINATION")
     destination_dir = (

@@ -11,6 +11,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use zynk_codegen::GenerationResult;
+use zynk_gen_effect::options::{EffectGeneratorOptions, Surface};
 use zynk_schema::ApiGraph;
 
 #[derive(Debug, Parser)]
@@ -94,6 +95,9 @@ struct GenArgs {
     /// Additional arguments passed to --rust-cmd before --dump-schema-json.
     #[arg(long = "rust-arg", value_name = "ARG")]
     rust_args: Vec<OsString>,
+
+    #[command(flatten)]
+    surface: SurfaceArgs,
 }
 
 #[derive(Debug, Args)]
@@ -129,6 +133,65 @@ struct DevArgs {
         allow_hyphen_values = true
     )]
     app_cmd: Vec<OsString>,
+
+    #[command(flatten)]
+    surface: SurfaceArgs,
+}
+
+/// Surface selection flags for the Effect generator. Ignored when `language` is not `effect`.
+#[derive(Debug, Default, Clone, Args)]
+struct SurfaceArgs {
+    /// Default Effect-client return surface for endpoints without a per-kind override.
+    #[arg(long = "surface", value_enum, value_name = "SURFACE")]
+    default: Option<SurfaceArg>,
+
+    /// Override the return surface used for `@command` endpoints.
+    #[arg(long = "commands", value_enum, value_name = "SURFACE")]
+    commands: Option<SurfaceArg>,
+
+    /// Override the return surface used for `@channel` endpoints.
+    #[arg(long = "channels", value_enum, value_name = "SURFACE")]
+    channels: Option<SurfaceArg>,
+
+    /// Override the return surface used for `@upload` endpoints.
+    #[arg(long = "uploads", value_enum, value_name = "SURFACE")]
+    uploads: Option<SurfaceArg>,
+
+    /// Override the return surface used for `@static_route` endpoints.
+    #[arg(long = "statics", value_enum, value_name = "SURFACE")]
+    statics: Option<SurfaceArg>,
+
+    /// Override the return surface used for `@websocket` endpoints.
+    #[arg(long = "websockets", value_enum, value_name = "SURFACE")]
+    websockets: Option<SurfaceArg>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum SurfaceArg {
+    Effect,
+    Promise,
+}
+
+impl From<SurfaceArg> for Surface {
+    fn from(value: SurfaceArg) -> Self {
+        match value {
+            SurfaceArg::Effect => Surface::Effect,
+            SurfaceArg::Promise => Surface::Promise,
+        }
+    }
+}
+
+impl SurfaceArgs {
+    fn to_options(&self) -> EffectGeneratorOptions {
+        EffectGeneratorOptions {
+            default: self.default.map(Surface::from).unwrap_or_default(),
+            commands: self.commands.map(Surface::from),
+            channels: self.channels.map(Surface::from),
+            uploads: self.uploads.map(Surface::from),
+            statics: self.statics.map(Surface::from),
+            websockets: self.websockets.map(Surface::from),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -166,6 +229,7 @@ struct DevConfig {
     watch_root: PathBuf,
     watch_globs: Vec<String>,
     debounce: Duration,
+    effect_options: EffectGeneratorOptions,
 }
 
 #[derive(Debug)]
@@ -236,13 +300,14 @@ fn gen(args: GenArgs) -> Result<()> {
         Target::Python => dump_python_schema(&args)?,
         Target::Rust => dump_rust_schema(&args)?,
     };
-    let result = generate_files(args.language, &graph);
+    let result = generate_files(args.language, &graph, &args.surface.to_options());
     write_generated_files(&result, &args.out)?;
     Ok(())
 }
 
 fn dev(args: DevArgs) -> Result<()> {
     let dump_command = dev_dump_command(&args)?;
+    let effect_options = args.surface.to_options();
     let config = DevConfig {
         language: args.language,
         out: args.out,
@@ -250,6 +315,7 @@ fn dev(args: DevArgs) -> Result<()> {
         watch_root: std::env::current_dir().context("failed to resolve current directory")?,
         watch_globs: args.watch_globs,
         debounce: Duration::from_millis(args.debounce_ms),
+        effect_options,
     };
 
     let (tx, rx) = mpsc::channel();
@@ -405,7 +471,7 @@ fn run_regeneration_cancellable(
             let result = read_child_output(stdout_reader, stderr_reader)
                 .and_then(|(stdout, stderr)| schema_from_output(status.success(), &stdout, &stderr))
                 .and_then(|graph| {
-                    let result = generate_files(config.language, &graph);
+                    let result = generate_files(config.language, &graph, &config.effect_options);
                     write_generated_files(&result, &config.out)
                 });
             return Ok(RegenOutcome::Completed(result));
@@ -657,10 +723,14 @@ fn schema_from_output(success: bool, stdout: &[u8], stderr: &[u8]) -> Result<Api
     })
 }
 
-fn generate_files(language: Language, graph: &ApiGraph) -> GenerationResult {
+fn generate_files(
+    language: Language,
+    graph: &ApiGraph,
+    effect_options: &EffectGeneratorOptions,
+) -> GenerationResult {
     match language {
         Language::Typescript => zynk_gen_ts::generate(graph),
-        Language::Effect => zynk_gen_effect::generate(graph),
+        Language::Effect => zynk_gen_effect::generate_with_options(graph, effect_options),
     }
 }
 
@@ -783,10 +853,12 @@ fn glob_matches(pattern: &str, path: &str) -> bool {
 mod tests {
     use super::{
         generated_file_destination, infer_python_app_command, is_watched_source_path,
-        output_directory, parse_app,
+        output_directory, parse_app, Cli, Commands, SurfaceArg, SurfaceArgs,
     };
+    use clap::Parser;
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
+    use zynk_gen_effect::options::Surface;
 
     #[test]
     fn parse_app_accepts_module_attr() {
@@ -844,5 +916,59 @@ mod tests {
         let command =
             infer_python_app_command(&[OsString::from("python"), OsString::from("main.py")]);
         assert!(command.is_some());
+    }
+
+    #[test]
+    fn surface_args_default_to_effect_when_unset() {
+        let options = SurfaceArgs::default().to_options();
+        assert_eq!(options.default, Surface::Effect);
+        assert!(options.commands.is_none());
+        assert!(options.channels.is_none());
+        assert!(options.uploads.is_none());
+        assert!(options.statics.is_none());
+        assert!(options.websockets.is_none());
+    }
+
+    #[test]
+    fn surface_args_apply_default_and_per_kind_overrides() {
+        let args = SurfaceArgs {
+            default: Some(SurfaceArg::Promise),
+            commands: Some(SurfaceArg::Effect),
+            channels: None,
+            uploads: Some(SurfaceArg::Promise),
+            statics: None,
+            websockets: Some(SurfaceArg::Promise),
+        };
+        let options = args.to_options();
+        assert_eq!(options.default, Surface::Promise);
+        assert_eq!(options.commands, Some(Surface::Effect));
+        assert_eq!(options.channels, None);
+        assert_eq!(options.uploads, Some(Surface::Promise));
+        assert_eq!(options.websockets, Some(Surface::Promise));
+    }
+
+    #[test]
+    fn gen_parses_surface_flag() {
+        let cli = Cli::try_parse_from([
+            "zynk",
+            "gen",
+            "effect",
+            "--target",
+            "python",
+            "--out",
+            "client.ts",
+            "--app",
+            "demo.app:bridge",
+            "--surface",
+            "promise",
+        ])
+        .expect("valid gen surface invocation");
+        match cli.command {
+            Commands::Gen(args) => {
+                assert!(matches!(args.surface.default, Some(SurfaceArg::Promise)));
+                assert_eq!(args.surface.to_options().default, Surface::Promise);
+            }
+            _ => panic!("expected Gen command"),
+        }
     }
 }

@@ -7,3 +7,4 @@ Cargo.lock
 bindings/python/build/
 bindings/python/dist/
 /build/
+.factory/

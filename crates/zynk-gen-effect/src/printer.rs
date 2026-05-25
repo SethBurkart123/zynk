@@ -1,6 +1,6 @@
 //! TypeScript source printer for Effect client APIs.
 
-use zynk_schema::{ApiGraph, Endpoint, EndpointKind, Param, TypeRef};
+use zynk_schema::{ApiGraph, Endpoint, EndpointKind, Param, TypeKind, TypeRef};
 
 use crate::options::{EffectGeneratorOptions, Surface};
 use crate::{lowering, types::TypeExpr};
@@ -199,7 +199,7 @@ fn emit_rpc(endpoint: &Endpoint, graph: &ApiGraph, surface: Surface) -> String {
     let fn_name = camel(&endpoint.name);
     let response = type_expr(&endpoint.returns, graph);
     let params_type = params_object(&endpoint.params, graph);
-    let args_payload = args_payload(&endpoint.params);
+    let args_payload = args_payload(&endpoint.params, graph);
     let mut lines = doc_block(endpoint.doc.as_deref());
 
     match (surface, params_type.as_str()) {
@@ -240,7 +240,7 @@ fn emit_channel(endpoint: &Endpoint, graph: &ApiGraph, surface: Surface) -> Stri
         .map(|ty| type_expr(ty, graph))
         .unwrap_or_else(|| TypeExpr::new("unknown", "Schema.Unknown"));
     let params_type = params_object(&endpoint.params, graph);
-    let args_payload = args_payload(&endpoint.params);
+    let args_payload = args_payload(&endpoint.params, graph);
     let mut lines = doc_block(endpoint.doc.as_deref());
 
     match (surface, params_type.as_str()) {
@@ -282,7 +282,7 @@ fn emit_upload(endpoint: &Endpoint, graph: &ApiGraph, surface: Surface) -> Strin
     } else {
         "[args.file]"
     };
-    let args_payload = args_payload(&endpoint.params);
+    let args_payload = args_payload(&endpoint.params, graph);
     let mut lines = doc_block(endpoint.doc.as_deref());
 
     match surface {
@@ -310,7 +310,7 @@ fn emit_upload(endpoint: &Endpoint, graph: &ApiGraph, surface: Surface) -> Strin
 fn emit_static(endpoint: &Endpoint, graph: &ApiGraph, surface: Surface) -> String {
     let fn_name = format!("{}Url", camel(&endpoint.name));
     let params_type = params_object(&endpoint.params, graph);
-    let args_payload = args_payload(&endpoint.params);
+    let args_payload = args_payload(&endpoint.params, graph);
     let mut lines = doc_block(endpoint.doc.as_deref());
 
     match (surface, params_type.as_str()) {
@@ -473,18 +473,63 @@ fn param_optional(param: &Param) -> bool {
     !param.required || param.ty.optional
 }
 
-fn args_payload(params: &[Param]) -> String {
+/// Build the JS payload object that callers hand to `callCommand`,
+/// `callChannel`, `callUpload`, or `buildStaticUrl`.
+///
+/// - Each entry's key is the param's source name (the canonical wire name
+///   declared in the API graph).
+/// - Each entry's value is `args.<tsName>` for primitives, or
+///   `Schema.encodeUnknownSync(<schema>)(args.<tsName>)` for any param whose
+///   type can carry per-field source/wire renames (models, records, arrays of
+///   models, unions, tuples). The schema's per-field `Schema.fromKey(...)`
+///   metadata then drives renames during encoding, so nested keys land on the
+///   wire under their declared source names while opaque payloads pass through
+///   untouched.
+fn args_payload(params: &[Param], graph: &ApiGraph) -> String {
     if params.is_empty() {
         return "{}".to_string();
     }
-    format!(
-        "{{ {} }}",
-        params
-            .iter()
-            .map(|param| format!("{}: args.{}", param.source_name, param.wire_name))
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
+    let entries = params
+        .iter()
+        .map(|param| {
+            let value = param_payload_expr(param, graph);
+            format!("{}: {value}", param.source_name)
+        })
+        .collect::<Vec<_>>();
+    format!("{{ {} }}", entries.join(", "))
+}
+
+fn param_payload_expr(param: &Param, graph: &ApiGraph) -> String {
+    let arg = format!("args.{}", param.wire_name);
+    if !type_needs_schema_encoding(&param.ty) {
+        return arg;
+    }
+    let schema = lowering::lower_with_graph(&param.ty, graph).schema;
+    if param_optional(param) {
+        format!("{arg} === undefined ? undefined : Schema.encodeUnknownSync({schema})({arg})")
+    } else {
+        format!("Schema.encodeUnknownSync({schema})({arg})")
+    }
+}
+
+/// True when the type can carry per-field wire renames that must be applied
+/// when encoding a request payload.
+///
+/// Pure primitives, literals, enums, and free `unknown`/`void` types have no
+/// renamable fields and would just round-trip through the encoder unchanged, so
+/// we skip the wrap to keep generated code lean.
+fn type_needs_schema_encoding(ty: &TypeRef) -> bool {
+    match ty.kind {
+        TypeKind::Model => true,
+        TypeKind::Array | TypeKind::Tuple | TypeKind::Union | TypeKind::Record => {
+            ty.inner.iter().any(type_needs_schema_encoding)
+        }
+        TypeKind::Primitive
+        | TypeKind::Literal
+        | TypeKind::Enum
+        | TypeKind::Any
+        | TypeKind::Void => false,
+    }
 }
 
 fn type_expr(ty: &TypeRef, graph: &ApiGraph) -> TypeExpr {
