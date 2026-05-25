@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from setuptools import setup  # type: ignore[import-untyped]
+from setuptools import Distribution, setup  # type: ignore[import-untyped]
 from setuptools.command.build_py import (
     build_py as _build_py,  # type: ignore[import-untyped]
 )
@@ -32,6 +32,11 @@ class BuildPy(_build_py):  # type: ignore[misc]
         super().run()
 
 
+class BinaryDistribution(Distribution):
+    def has_ext_modules(self) -> bool:
+        return _bundle_cli_enabled()
+
+
 class BdistWheel(_bdist_wheel):  # type: ignore[misc]
     def finalize_options(self) -> None:
         super().finalize_options()
@@ -39,4 +44,7 @@ class BdistWheel(_bdist_wheel):  # type: ignore[misc]
             self.root_is_pure = False
 
 
-setup(cmdclass={"build_py": BuildPy, "bdist_wheel": BdistWheel})
+setup(
+    cmdclass={"build_py": BuildPy, "bdist_wheel": BdistWheel},
+    distclass=BinaryDistribution,
+)

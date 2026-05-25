@@ -334,20 +334,13 @@ fn spawn_shutdown_listeners(tx: Sender<DevMessage>) {
             }
         };
         runtime.block_on(async move {
-            let mut terminate = unix_termination_signal();
             tokio::select! {
                 result = tokio::signal::ctrl_c() => {
                     if let Err(err) = result {
                         eprintln!("Error: failed to listen for Ctrl-C: {err}");
                     }
                 }
-                _ = async {
-                    if let Some(signal) = terminate.as_mut() {
-                        signal.recv().await;
-                    } else {
-                        std::future::pending::<()>().await;
-                    }
-                } => {}
+                _ = wait_for_termination_signal() => {}
             }
             let _ = tx.send(DevMessage::Shutdown);
         });
@@ -355,13 +348,17 @@ fn spawn_shutdown_listeners(tx: Sender<DevMessage>) {
 }
 
 #[cfg(unix)]
-fn unix_termination_signal() -> Option<tokio::signal::unix::Signal> {
-    tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok()
+async fn wait_for_termination_signal() {
+    if let Ok(mut signal) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+        signal.recv().await;
+    } else {
+        std::future::pending::<()>().await;
+    }
 }
 
 #[cfg(not(unix))]
-fn unix_termination_signal() -> Option<()> {
-    None
+async fn wait_for_termination_signal() {
+    std::future::pending::<()>().await;
 }
 
 fn wait_for_debounce(rx: &Receiver<DevMessage>, config: &DevConfig) -> DebounceOutcome {
