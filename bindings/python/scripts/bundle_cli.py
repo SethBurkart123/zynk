@@ -9,7 +9,13 @@ from pathlib import Path
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    path = Path(__file__).resolve()
+    for parent in path.parents:
+        if (parent / "Cargo.toml").is_file():
+            return parent
+    raise FileNotFoundError(
+        "Could not find repo root (no Cargo.toml in any parent directory)"
+    )
 
 
 def _binary_name() -> str:
