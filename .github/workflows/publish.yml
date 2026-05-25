@@ -20,10 +20,6 @@ jobs:
             runner: macos-14
             cibw-archs: arm64
             cibw-build: cp*-macosx_arm64
-          - name: macos-x86_64
-            runner: macos-13
-            cibw-archs: x86_64
-            cibw-build: cp*-macosx_x86_64
           - name: linux-x86_64
             runner: ubuntu-22.04
             cibw-archs: x86_64

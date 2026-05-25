@@ -101,10 +101,10 @@ def test_pyproject_aligns_version_entrypoint_and_cibuildwheel_targets() -> None:
     build_targets = set(cibuildwheel["build"].split())
     assert {
         "cp*-macosx_arm64",
-        "cp*-macosx_x86_64",
         "cp*-manylinux_x86_64",
         "cp*-manylinux_aarch64",
         "cp*-win_amd64",
     }.issubset(build_targets)
+    assert "cp*-macosx_x86_64" not in build_targets
     assert cibuildwheel["environment"]["ZYNK_BUNDLE_CLI"] == "1"
     assert "ZYNK_BUNDLE_CLI" in cibuildwheel["before-build"]
