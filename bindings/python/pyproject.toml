@@ -71,7 +71,7 @@ zynk = ["bin/zynk", "bin/zynk.exe"]
 
 [tool.cibuildwheel]
 build = "cp*-macosx_arm64 cp*-macosx_x86_64 cp*-manylinux_x86_64 cp*-manylinux_aarch64 cp*-win_amd64"
-skip = "cp36-* cp37-* cp38-* cp39-* pp*"
+skip = "pp*"
 before-build = "python -c \"import os; assert os.environ.get('ZYNK_BUNDLE_CLI') == '1'\""
 test-command = "zynk --version && python -c \"from zynk import Bridge; Bridge()\""
 
