@@ -1,6 +1,6 @@
 [package]
 name = "zynk-axum"
-version = "0.1.2"
+version = "0.1.3"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -14,7 +14,7 @@ keywords = ["zynk", "axum", "rpc", "server"]
 categories = ["web-programming::http-server"]
 
 [dependencies]
-zynk-runtime = { version = "0.1.2", path = "../zynk-runtime" }
+zynk-runtime = { version = "0.1.3", path = "../zynk-runtime" }
 axum = { version = "0.8", features = ["multipart", "ws"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "fs"] }
 tower = "0.5"
