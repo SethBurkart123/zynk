@@ -163,7 +163,7 @@ def test_dump_schema_json_matches_canonical_rust_shape() -> None:
                         "wireName": "query",
                     }
                 ],
-                "returns": {"kind": "primitive", "name": "undefined", "nullable": False, "optional": False},
+                "returns": {"kind": "void", "nullable": False, "optional": False},
             },
             "update_profile": {
                 "kind": "rpc",

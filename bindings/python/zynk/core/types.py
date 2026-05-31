@@ -17,7 +17,6 @@ PYTHON_PRIMITIVES: dict[Any, str] = {
     float: "number",
     bool: "boolean",
     bytes: "string",
-    type(None): "undefined",
 }
 
 
@@ -37,7 +36,7 @@ def strip_optional(type_hint: Any) -> tuple[Any, bool]:
 
 
 def type_ref(type_hint: Any) -> TypeRef:
-    if type_hint is None:
+    if type_hint is None or type_hint is type(None):
         return TypeRef(kind="void", py_type=None)
     if type_hint is Any:
         return TypeRef(kind="any", py_type=type_hint)
