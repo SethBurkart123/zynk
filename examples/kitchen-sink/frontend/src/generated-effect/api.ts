@@ -55,7 +55,7 @@ export const DocumentUploadResult = Schema.Struct({
   id: Schema.String,
   filename: Schema.String,
   size: Schema.Number,
-  pageCount: Schema.optionalWith(Schema.Number, { nullable: true }).pipe(Schema.fromKey("page_count"))
+  pageCount: Schema.optionalWith(Schema.Number, { nullable: true })
 })
 
 export type DocumentUploadResult = Schema.Schema.Type<typeof DocumentUploadResult>
@@ -64,9 +64,9 @@ export const FileInfo = Schema.Struct({
   id: Schema.String,
   filename: Schema.String,
   size: Schema.Number,
-  contentType: Schema.propertySignature(Schema.String).pipe(Schema.fromKey("content_type")),
+  contentType: Schema.String,
   checksum: Schema.String,
-  uploadedAt: Schema.propertySignature(Schema.String).pipe(Schema.fromKey("uploaded_at"))
+  uploadedAt: Schema.String
 })
 
 export type FileInfo = Schema.Schema.Type<typeof FileInfo>
@@ -76,14 +76,14 @@ export const ImageUploadResult = Schema.Struct({
   filename: Schema.String,
   width: Schema.optionalWith(Schema.Number, { nullable: true }),
   height: Schema.optionalWith(Schema.Number, { nullable: true }),
-  thumbnailBase64: Schema.optionalWith(Schema.String, { nullable: true }).pipe(Schema.fromKey("thumbnail_base64"))
+  thumbnailBase64: Schema.optionalWith(Schema.String, { nullable: true })
 })
 
 export type ImageUploadResult = Schema.Schema.Type<typeof ImageUploadResult>
 
 export const ServerStatus = Schema.Struct({
-  connectedUsers: Schema.propertySignature(Schema.Number).pipe(Schema.fromKey("connected_users")),
-  uptimeSeconds: Schema.propertySignature(Schema.Number).pipe(Schema.fromKey("uptime_seconds"))
+  connectedUsers: Schema.Number,
+  uptimeSeconds: Schema.Number
 })
 
 export type ServerStatus = Schema.Schema.Type<typeof ServerStatus>
@@ -103,9 +103,9 @@ export const Task = Schema.Struct({
   priority: Schema.UndefinedOr(Schema.Literal("low", "medium", "high", "urgent")),
   status: Schema.UndefinedOr(Schema.Literal("todo", "in_progress", "done", "cancelled")),
   labels: Schema.UndefinedOr(Schema.Array(TaskLabel)),
-  createdAt: Schema.propertySignature(Schema.String).pipe(Schema.fromKey("created_at")),
-  dueDate: Schema.optionalWith(Schema.String, { nullable: true }).pipe(Schema.fromKey("due_date")),
-  assignedTo: Schema.optionalWith(Schema.Number, { nullable: true }).pipe(Schema.fromKey("assigned_to"))
+  createdAt: Schema.String,
+  dueDate: Schema.optionalWith(Schema.String, { nullable: true }),
+  assignedTo: Schema.optionalWith(Schema.Number, { nullable: true })
 })
 
 export type Task = Schema.Schema.Type<typeof Task>
@@ -113,10 +113,10 @@ export type Task = Schema.Schema.Type<typeof Task>
 export const TaskStats = Schema.Struct({
   total: Schema.Number,
   todo: Schema.Number,
-  inProgress: Schema.propertySignature(Schema.Number).pipe(Schema.fromKey("in_progress")),
+  inProgress: Schema.Number,
   done: Schema.Number,
   cancelled: Schema.Number,
-  byPriority: Schema.propertySignature(Schema.Record({ key: Schema.String, value: Schema.Number })).pipe(Schema.fromKey("by_priority"))
+  byPriority: Schema.Record({ key: Schema.String, value: Schema.Number })
 })
 
 export type TaskStats = Schema.Schema.Type<typeof TaskStats>
@@ -125,14 +125,14 @@ export const TaskWireCheck = Schema.Struct({
   kind: Schema.Literal("task_wire_check"),
   priority: Schema.Literal("low", "medium", "high", "urgent"),
   status: Schema.Literal("todo", "in_progress", "done", "cancelled"),
-  numericStatus: Schema.propertySignature(Schema.Literal(1, 2, 3)).pipe(Schema.fromKey("numeric_status"))
+  numericStatus: Schema.Literal(1, 2, 3)
 })
 
 export type TaskWireCheck = Schema.Schema.Type<typeof TaskWireCheck>
 
 export const TypingIndicator = Schema.Struct({
   user: Schema.String,
-  isTyping: Schema.propertySignature(Schema.Boolean).pipe(Schema.fromKey("is_typing"))
+  isTyping: Schema.Boolean
 })
 
 export type TypingIndicator = Schema.Schema.Type<typeof TypingIndicator>
@@ -141,7 +141,7 @@ export const User = Schema.Struct({
   id: Schema.Number,
   name: Schema.String,
   email: Schema.String,
-  isActive: Schema.propertySignature(Schema.UndefinedOr(Schema.Boolean)).pipe(Schema.fromKey("is_active"))
+  isActive: Schema.UndefinedOr(Schema.Boolean)
 })
 
 export type User = Schema.Schema.Type<typeof User>
@@ -165,7 +165,7 @@ export const WeatherData = Schema.Struct({
   temperature: Schema.Number,
   humidity: Schema.Number,
   conditions: Schema.String,
-  windSpeed: Schema.propertySignature(Schema.Number).pipe(Schema.fromKey("wind_speed"))
+  windSpeed: Schema.Number
 })
 
 export type WeatherData = Schema.Schema.Type<typeof WeatherData>
@@ -175,7 +175,7 @@ export const WeatherForecast = Schema.Struct({
   high: Schema.Number,
   low: Schema.Number,
   conditions: Schema.String,
-  precipitationChance: Schema.propertySignature(Schema.Number).pipe(Schema.fromKey("precipitation_chance"))
+  precipitationChance: Schema.Number
 })
 
 export type WeatherForecast = Schema.Schema.Type<typeof WeatherForecast>
@@ -201,7 +201,7 @@ export const createLabel = (args: { name: string; color?: string }, options?: Ca
  * Create a new task.
  */
 export const createTask = (args: { title: string; description?: string | null; priority?: string; dueDate?: string | null; labelIds?: ReadonlyArray<number> | null }, options?: CallOptions): Effect.Effect<Task, ZynkError, ZynkClient> =>
-  callCommand("create_task", { title: args.title, description: args.description, priority: args.priority, due_date: args.dueDate, label_ids: args.labelIds }, Task, options)
+  callCommand("create_task", { title: args.title, description: args.description, priority: args.priority, dueDate: args.dueDate, labelIds: args.labelIds }, Task, options)
 
 /**
  * Create a new user.
@@ -215,7 +215,7 @@ export const createUser = (args: { name: string; email: string }, options?: Call
  * Delete a task.
  */
 export const deleteTask = (args: { taskId: number }, options?: CallOptions): Effect.Effect<boolean, ZynkError, ZynkClient> =>
-  callCommand("delete_task", { task_id: args.taskId }, Schema.Boolean, options)
+  callCommand("delete_task", { taskId: args.taskId }, Schema.Boolean, options)
 
 /**
  * Delete a user.
@@ -223,13 +223,13 @@ export const deleteTask = (args: { taskId: number }, options?: CallOptions): Eff
  * Returns True if the user was deleted, False if they didn't exist.
  */
 export const deleteUser = (args: { userId: number }, options?: CallOptions): Effect.Effect<boolean, ZynkError, ZynkClient> =>
-  callCommand("delete_user", { user_id: args.userId }, Schema.Boolean, options)
+  callCommand("delete_user", { userId: args.userId }, Schema.Boolean, options)
 
 /**
  * Echo a literal and enum payload without coercing wire values.
  */
-export const echoTaskWireCheck = (args: { payload: TaskWireCheck }, options?: CallOptions): Effect.Effect<TaskWireCheck, ZynkError, ZynkClient> =>
-  callCommand("echo_task_wire_check", { payload: Schema.encodeUnknownSync(TaskWireCheck)(args.payload) }, TaskWireCheck, options)
+export const echoTaskWireCheck = (args: TaskWireCheck, options?: CallOptions): Effect.Effect<TaskWireCheck, ZynkError, ZynkClient> =>
+  callCommand("echo_task_wire_check", Schema.encodeUnknownSync(TaskWireCheck)(args), TaskWireCheck, options)
 
 /**
  * Get weather forecast for a city.
@@ -243,7 +243,7 @@ export const getForecast = (args: { city: string; days?: number }, options?: Cal
  * Get a task by ID.
  */
 export const getTask = (args: { taskId: number }, options?: CallOptions): Effect.Effect<Task, ZynkError, ZynkClient> =>
-  callCommand("get_task", { task_id: args.taskId }, Task, options)
+  callCommand("get_task", { taskId: args.taskId }, Task, options)
 
 /**
  * Get statistics about all tasks.
@@ -263,7 +263,7 @@ export const getTaskWireCheck = (options?: CallOptions): Effect.Effect<TaskWireC
  * Raises an error if the user doesn't exist.
  */
 export const getUser = (args: { userId: number }, options?: CallOptions): Effect.Effect<User, ZynkError, ZynkClient> =>
-  callCommand("get_user", { user_id: args.userId }, User, options)
+  callCommand("get_user", { userId: args.userId }, User, options)
 
 /**
  * Get current weather for a city.
@@ -291,7 +291,7 @@ export const listLabels = (options?: CallOptions): Effect.Effect<ReadonlyArray<T
  * Can filter by status, priority, or label.
  */
 export const listTasks = (args: { status?: string | null; priority?: string | null; labelId?: number | null }, options?: CallOptions): Effect.Effect<ReadonlyArray<Task>, ZynkError, ZynkClient> =>
-  callCommand("list_tasks", { status: args.status, priority: args.priority, label_id: args.labelId }, Schema.Array(Task), options)
+  callCommand("list_tasks", { status: args.status, priority: args.priority, labelId: args.labelId }, Schema.Array(Task), options)
 
 /**
  * List all users.
@@ -299,7 +299,7 @@ export const listTasks = (args: { status?: string | null; priority?: string | nu
  * Optionally filter to only active users.
  */
 export const listUsers = (args: { activeOnly?: boolean }, options?: CallOptions): Effect.Effect<ReadonlyArray<User>, ZynkError, ZynkClient> =>
-  callCommand("list_users", { active_only: args.activeOnly }, Schema.Array(User), options)
+  callCommand("list_users", { activeOnly: args.activeOnly }, Schema.Array(User), options)
 
 /**
  * Search for users by name or email.
@@ -313,7 +313,7 @@ export const searchUsers = (args: { query: string }, options?: CallOptions): Eff
  * Update the status of a task.
  */
 export const updateTaskStatus = (args: { taskId: number; status: string }, options?: CallOptions): Effect.Effect<Task, ZynkError, ZynkClient> =>
-  callCommand("update_task_status", { task_id: args.taskId, status: args.status }, Task, options)
+  callCommand("update_task_status", { taskId: args.taskId, status: args.status }, Task, options)
 
 /**
  * Update an existing user.
@@ -321,7 +321,7 @@ export const updateTaskStatus = (args: { taskId: number; status: string }, optio
  * Only provided fields will be updated.
  */
 export const updateUser = (args: { userId: number; name?: string | null; email?: string | null; isActive?: boolean | null }, options?: CallOptions): Effect.Effect<User, ZynkError, ZynkClient> =>
-  callCommand("update_user", { user_id: args.userId, name: args.name, email: args.email, is_active: args.isActive }, User, options)
+  callCommand("update_user", { userId: args.userId, name: args.name, email: args.email, isActive: args.isActive }, User, options)
 
 // ============ Channels ============
 
@@ -345,7 +345,7 @@ export const streamMultiCity = (args: { cities: ReadonlyArray<string> }, options
  * channel: The streaming channel (automatically injected).
  */
 export const streamWeather = (args: { city: string; intervalSeconds: number }, options?: CallOptions): Stream.Stream<WeatherUpdate, ZynkError, ZynkClient> =>
-  callChannel("stream_weather", { city: args.city, interval_seconds: args.intervalSeconds }, WeatherUpdate, options)
+  callChannel("stream_weather", { city: args.city, intervalSeconds: args.intervalSeconds }, WeatherUpdate, options)
 
 // ============ Uploads ============
 
@@ -355,7 +355,7 @@ export const streamWeather = (args: { city: string; intervalSeconds: number }, o
  * Only accepts document files up to 10MB.
  */
 export const uploadDocument = (args: { file: File; extractMetadata?: boolean }, options?: UploadOptions): Effect.Effect<DocumentUploadResult, ZynkError, ZynkClient> =>
-  callUpload("upload_document", [args.file], { extract_metadata: args.extractMetadata }, DocumentUploadResult, options)
+  callUpload("upload_document", [args.file], { extractMetadata: args.extractMetadata }, DocumentUploadResult, options)
 
 /**
  * Upload a single file of any type.
@@ -379,7 +379,7 @@ export const uploadFiles = (args: { files: ReadonlyArray<File> }, options?: Uplo
  * Only accepts image files up to 5MB.
  */
 export const uploadImage = (args: { file: File; generateThumbnail?: boolean }, options?: UploadOptions): Effect.Effect<ImageUploadResult, ZynkError, ZynkClient> =>
-  callUpload("upload_image", [args.file], { generate_thumbnail: args.generateThumbnail }, ImageUploadResult, options)
+  callUpload("upload_image", [args.file], { generateThumbnail: args.generateThumbnail }, ImageUploadResult, options)
 
 /**
  * Upload multiple media files (images, videos, audio).
@@ -387,7 +387,7 @@ export const uploadImage = (args: { file: File; generateThumbnail?: boolean }, o
  * Accepts files up to 50MB each, optionally grouped into an album.
  */
 export const uploadMedia = (args: { files: ReadonlyArray<File>; albumName?: string | null }, options?: UploadOptions): Effect.Effect<ReadonlyArray<FileInfo>, ZynkError, ZynkClient> =>
-  callUpload("upload_media", args.files, { album_name: args.albumName }, Schema.Array(FileInfo), options)
+  callUpload("upload_media", args.files, { albumName: args.albumName }, Schema.Array(FileInfo), options)
 
 // ============ Static Files ============
 

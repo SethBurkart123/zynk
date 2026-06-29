@@ -294,6 +294,20 @@ impl TypeRefStatic {
         }
     }
 
+    /// Construct static type metadata for a record key/value type.
+    ///
+    /// Pass a two-element slice containing the key and value types.
+    pub const fn record(entries: &'static [TypeRefStatic]) -> Self {
+        Self {
+            kind: TypeKind::Record,
+            name: None,
+            inner: entries,
+            optional: false,
+            nullable: false,
+            value: None,
+        }
+    }
+
     /// Construct static type metadata for a union of member types.
     pub const fn union(members: &'static [TypeRefStatic]) -> Self {
         Self {

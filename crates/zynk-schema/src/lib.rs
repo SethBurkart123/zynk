@@ -8,7 +8,7 @@ pub mod graph;
 pub mod naming;
 pub mod types;
 
-pub use endpoint::{Endpoint, EndpointKind, Param};
+pub use endpoint::{single_model_param, Endpoint, EndpointKind, Param};
 pub use graph::{ApiGraph, EnumDef, Field, ModelDef};
 pub use serde_json::Value;
 pub use types::{TypeKind, TypeRef};

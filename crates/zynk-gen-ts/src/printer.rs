@@ -1,6 +1,6 @@
 //! TypeScript code printer for API models and endpoints.
 
-use zynk_schema::{ApiGraph, Endpoint, EndpointKind, Field, Param, TypeKind, TypeRef};
+use zynk_schema::{single_model_param, ApiGraph, Endpoint, EndpointKind, Field, Param, TypeKind, TypeRef};
 
 use crate::{lowering, naming};
 
@@ -425,6 +425,13 @@ fn print_doc(printer: &mut TsPrinter, endpoint: &Endpoint) {
 }
 
 fn params_object_type(params: &[Param], graph: &ApiGraph) -> String {
+    if let Some(param) = single_model_param(params) {
+        return optional_nullable_type(
+            lowering::lower_required_with_graph(&param.ty, graph),
+            param.ty.optional,
+            param.ty.nullable,
+        );
+    }
     format!(
         "{{ {} }}",
         params
@@ -475,6 +482,9 @@ fn param_optional(param: &Param) -> bool {
 fn args_object(params: &[Param], graph: &ApiGraph) -> String {
     if params.is_empty() {
         return "{}".to_string();
+    }
+    if let Some(param) = single_model_param(params) {
+        return request_mapping(&param.ty, "args", graph);
     }
     format!(
         "{{ {} }}",

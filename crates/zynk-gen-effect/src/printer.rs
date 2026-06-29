@@ -1,6 +1,6 @@
 //! TypeScript source printer for Effect client APIs.
 
-use zynk_schema::{ApiGraph, Endpoint, EndpointKind, Param, TypeKind, TypeRef};
+use zynk_schema::{single_model_param, ApiGraph, Endpoint, EndpointKind, Param, TypeKind, TypeRef};
 
 use crate::options::{EffectGeneratorOptions, Surface};
 use crate::{lowering, types::TypeExpr};
@@ -418,6 +418,10 @@ fn params_object(params: &[Param], graph: &ApiGraph) -> String {
         return "void".to_string();
     }
 
+    if let Some(param) = single_model_param(params) {
+        return type_expr(&param.ty, graph).ts;
+    }
+
     let required = params
         .iter()
         .filter(|param| !param_optional(param))
@@ -476,24 +480,30 @@ fn param_optional(param: &Param) -> bool {
 /// Build the JS payload object that callers hand to `callCommand`,
 /// `callChannel`, `callUpload`, or `buildStaticUrl`.
 ///
-/// - Each entry's key is the param's source name (the canonical wire name
-///   declared in the API graph).
+/// - Each entry's key is the param's wire name declared in the API graph.
 /// - Each entry's value is `args.<tsName>` for primitives, or
 ///   `Schema.encodeUnknownSync(<schema>)(args.<tsName>)` for any param whose
 ///   type can carry per-field source/wire renames (models, records, arrays of
 ///   models, unions, tuples). The schema's per-field `Schema.fromKey(...)`
-///   metadata then drives renames during encoding, so nested keys land on the
-///   wire under their declared source names while opaque payloads pass through
-///   untouched.
+///   metadata then drives any explicit renames during encoding while opaque
+///   payloads pass through untouched.
 fn args_payload(params: &[Param], graph: &ApiGraph) -> String {
     if params.is_empty() {
         return "{}".to_string();
+    }
+    if let Some(param) = single_model_param(params) {
+        let arg = "args".to_string();
+        if !type_needs_schema_encoding(&param.ty) {
+            return arg;
+        }
+        let schema = lowering::lower_with_graph(&param.ty, graph).schema;
+        return format!("Schema.encodeUnknownSync({schema})({arg})");
     }
     let entries = params
         .iter()
         .map(|param| {
             let value = param_payload_expr(param, graph);
-            format!("{}: {value}", param.source_name)
+            format!("{}: {value}", param.wire_name)
         })
         .collect::<Vec<_>>();
     format!("{{ {} }}", entries.join(", "))

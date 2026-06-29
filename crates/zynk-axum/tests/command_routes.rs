@@ -14,6 +14,14 @@ static USER_PARAMS: &[zynk_runtime::ParamMeta] = &[zynk_runtime::ParamMeta {
     default: None,
 }];
 
+static CHAT_ID_PARAMS: &[zynk_runtime::ParamMeta] = &[zynk_runtime::ParamMeta {
+    source_name: "body",
+    wire_name: "body",
+    ty: TypeRefStatic::model("ChatId"),
+    required: true,
+    default: None,
+}];
+
 zynk_runtime::inventory::submit! {
     zynk_runtime::EndpointMeta {
         name: "get_user",
@@ -30,6 +38,25 @@ zynk_runtime::inventory::submit! {
         server_events: &[],
         client_events: &[],
         handler_key: Some(HandlerKey("command_routes::get_user")),
+    }
+}
+
+zynk_runtime::inventory::submit! {
+    zynk_runtime::EndpointMeta {
+        name: "get_chat",
+        kind: zynk_runtime::EndpointKind::Rpc,
+        module: Some("command_routes"),
+        doc: Some("Fetch a chat by flat model body."),
+        params: CHAT_ID_PARAMS,
+        returns: TypeRefStatic::model("ChatId"),
+        channel_item: None,
+        file_param: None,
+        multi_file: false,
+        max_size: None,
+        allowed_types: &[],
+        server_events: &[],
+        client_events: &[],
+        handler_key: Some(HandlerKey("command_routes::get_chat")),
     }
 }
 
@@ -100,6 +127,13 @@ fn test_bridge() -> zynk_axum::ZynkBridge {
                 .ok_or_else(|| ZynkError::new(zynk_runtime::VALIDATION_ERROR, "bad id"))?;
             Ok(json!({"id": id, "name": "ada"}))
         })
+        .register_handler(HandlerKey("command_routes::get_chat"), |payload: Value| {
+            let id = payload
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ZynkError::new(zynk_runtime::VALIDATION_ERROR, "bad id"))?;
+            Ok(json!({"id": id}))
+        })
         .register_handler(
             HandlerKey("command_routes::fail_command"),
             |_payload: Value| Err(ZynkError::new(EXECUTION_ERROR, "handler failed")),
@@ -144,6 +178,15 @@ async fn command_route_returns_success_envelope_and_accepts_camel_or_snake_keys(
     let (status, body) = post_json(router, "/command/get_user", r#"{"user_id":8}"#).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({"result": {"id": 8, "name": "ada"}}));
+}
+
+#[tokio::test]
+async fn command_route_accepts_flat_single_model_body_without_wrapper_key() {
+    let router = test_bridge().configure(Router::new());
+
+    let (status, body) = post_json(router, "/command/get_chat", r#"{"id":"chat-1"}"#).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({"result": {"id": "chat-1"}}));
 }
 
 #[tokio::test]

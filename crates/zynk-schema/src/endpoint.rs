@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::TypeRef;
+use crate::{TypeKind, TypeRef};
 
 /// Supported endpoint surfaces. These map to Zynk's stable wire routes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +70,10 @@ pub struct Endpoint {
     pub server_events: Vec<Param>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub client_events: Vec<Param>,
+}
+
+pub fn single_model_param<'a>(params: &'a [Param]) -> Option<&'a Param> {
+    (params.len() == 1 && params[0].ty.kind == TypeKind::Model).then(|| &params[0])
 }
 
 impl Endpoint {

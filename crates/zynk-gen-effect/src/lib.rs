@@ -211,14 +211,13 @@ mod tests {
         assert!(api.contains(
             "getUserProfile = (args: { userId: number }, options?: CallOptions): Promise<User> =>"
         ));
-        assert!(api.contains(
-            "callCommand(\"get_user_profile\", { user_id: args.userId }, User, options)"
-        ));
+        assert!(api
+            .contains("callCommand(\"get_user_profile\", { userId: args.userId }, User, options)"));
         assert!(api.contains("streamNumbers = (options?: CallOptions): AsyncIterable<number> =>"));
         assert!(api.contains("uploadAsset = (args: { file: File; label?: string }, options?: UploadOptions): Promise<string> =>"));
         assert!(api.contains("runPromise(callUpload(\"upload_asset\", [args.file], { label: args.label }, Schema.String, options))"));
         assert!(api.contains("assetUrl = (args: { assetId: string }): Promise<string> =>"));
-        assert!(api.contains("runPromise(buildStaticUrl(\"asset\", { asset_id: args.assetId }))"));
+        assert!(api.contains("runPromise(buildStaticUrl(\"asset\", { assetId: args.assetId }))"));
         assert!(api.contains("export interface ChatRoomServerEvents"));
         assert!(api.contains("  new_message: string"));
         assert!(api.contains("export interface ChatRoomClientEvents"));

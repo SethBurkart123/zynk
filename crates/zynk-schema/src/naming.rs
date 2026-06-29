@@ -1,6 +1,6 @@
 /// Convert a snake_case backend name into the camelCase wire/client name.
 pub fn to_camel_case(name: &str) -> String {
-    let mut parts = name.split('_');
+    let mut parts = name.split('_').filter(|part| !part.is_empty());
     let Some(first) = parts.next() else {
         return String::new();
     };
@@ -40,9 +40,11 @@ mod tests {
     use super::{to_camel_case, to_pascal_case};
 
     #[test]
-    fn converts_names_like_python_helpers() {
+    fn converts_names() {
         assert_eq!(to_camel_case("get_user"), "getUser");
         assert_eq!(to_camel_case("user"), "user");
+        assert_eq!(to_camel_case("_body"), "body");
+        assert_eq!(to_camel_case("_user_id"), "userId");
         assert_eq!(to_pascal_case("get_user"), "GetUser");
     }
 }

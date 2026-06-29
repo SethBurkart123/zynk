@@ -200,6 +200,7 @@ fn expand_endpoint(
     };
 
     Ok(quote! {
+        #[allow(dead_code)] // inventory metadata only; host registers the real handler separately
         #function
         #registration
     })
@@ -437,7 +438,7 @@ fn param_from_ident_and_type(ident: &syn::Ident, ty: &Type) -> ParamTokens {
     let lowered = lower_type(ty);
     ParamTokens {
         source_name: ident.to_string(),
-        wire_name: to_camel_case(&ident.to_string()),
+        wire_name: zynk_schema::naming::to_camel_case(&ident.to_string()),
         ty: lowered.tokens,
         required: !lowered.optional,
     }
@@ -505,6 +506,7 @@ fn lower_path_type(type_path: &syn::TypePath) -> LoweredType {
         | "usize" => primitive("number"),
         "Option" => lower_option(segment),
         "Vec" => lower_vec(segment),
+        "BTreeMap" | "HashMap" => lower_map(segment),
         "Result" => lower_result(segment),
         "Value" => LoweredType {
             tokens: quote! { ::zynk_runtime::TypeRefStatic::any() },
@@ -551,6 +553,25 @@ fn lower_vec(segment: &syn::PathSegment) -> LoweredType {
     let inner_tokens = inner.tokens;
     LoweredType {
         tokens: quote! { ::zynk_runtime::TypeRefStatic::array(&[#inner_tokens]) },
+        optional: false,
+    }
+}
+
+fn lower_map(segment: &syn::PathSegment) -> LoweredType {
+    let types = generic_types(segment);
+    let mut types = types.into_iter();
+    let key = types.next().map(lower_type).unwrap_or_else(|| LoweredType {
+        tokens: quote! { ::zynk_runtime::TypeRefStatic::primitive("string") },
+        optional: false,
+    });
+    let value = types.next().map(lower_type).unwrap_or_else(|| LoweredType {
+        tokens: quote! { ::zynk_runtime::TypeRefStatic::any() },
+        optional: false,
+    });
+    let key_tokens = key.tokens;
+    let value_tokens = value.tokens;
+    LoweredType {
+        tokens: quote! { ::zynk_runtime::TypeRefStatic::record(&[#key_tokens, #value_tokens]) },
         optional: false,
     }
 }
@@ -606,19 +627,21 @@ fn first_generic_type(segment: &syn::PathSegment) -> Option<&Type> {
     })
 }
 
-fn to_camel_case(name: &str) -> String {
-    let mut parts = name.split('_');
-    let Some(first) = parts.next() else {
-        return String::new();
-    };
-
-    let mut output = first.to_string();
-    for part in parts {
-        let mut chars = part.chars();
-        if let Some(first_char) = chars.next() {
-            output.extend(first_char.to_uppercase());
-            output.push_str(chars.as_str());
-        }
+fn generic_types(segment: &syn::PathSegment) -> Vec<&Type> {
+    if let PathArguments::AngleBracketed(arguments) = &segment.arguments {
+        arguments
+            .args
+            .iter()
+            .filter_map(|argument| {
+                if let GenericArgument::Type(ty) = argument {
+                    Some(ty)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
     }
-    output
 }
+

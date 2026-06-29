@@ -31,6 +31,7 @@ use zynk_runtime::{
     EXECUTION_ERROR, INTERNAL_ERROR, STATIC_HANDLER_NOT_FOUND, UPLOAD_HANDLER_NOT_FOUND,
     UPLOAD_VALIDATION_ERROR, VALIDATION_ERROR, WEBSOCKET_ERROR,
 };
+use zynk_runtime::zynk_schema::TypeKind;
 
 /// Axum integration point for Zynk endpoints.
 #[derive(Clone)]
@@ -1330,6 +1331,10 @@ fn validate_params(params: &[ParamMeta], payload: Value) -> Result<Value, ZynkEr
     let object = payload
         .as_object()
         .ok_or_else(|| ZynkError::new(VALIDATION_ERROR, "Request body must be a JSON object"))?;
+
+    if params.len() == 1 && params[0].ty.kind == TypeKind::Model {
+        return Ok(Value::Object(object.clone()));
+    }
 
     for param in params.iter().filter(|param| param.required) {
         if !object.contains_key(param.source_name) && !object.contains_key(param.wire_name) {

@@ -414,8 +414,8 @@ fn render_field(field: &Field, graph: &ApiGraph, self_name: &str) -> RenderedFie
 
     let expr = lower_for_model(&ty, graph, self_name);
     let ts_name = field_ts_name(field);
-    let schema = if ts_name != field.source_name {
-        wrap_schema_from_key(&expr.schema, ty.optional, ty.nullable, &field.source_name)
+    let schema = if ts_name != field.wire_name {
+        wrap_schema_from_key(&expr.schema, ty.optional, ty.nullable, &field.wire_name)
     } else {
         expr.schema.clone()
     };
@@ -628,18 +628,12 @@ mod tests {
 
         let rendered = render_model_schemas(&graph).join("\n");
 
-        assert!(rendered.contains(
-            "requiredName: Schema.propertySignature(Schema.String).pipe(Schema.fromKey(\"required_name\"))"
-        ));
-        assert!(rendered.contains(
-            "optionalName: Schema.propertySignature(Schema.UndefinedOr(Schema.String)).pipe(Schema.fromKey(\"optional_name\"))"
-        ));
-        assert!(rendered.contains(
-            "nullableName: Schema.propertySignature(Schema.NullOr(Schema.String)).pipe(Schema.fromKey(\"nullable_name\"))"
-        ));
-        assert!(rendered.contains(
-            "bothName: Schema.optionalWith(Schema.String, { nullable: true }).pipe(Schema.fromKey(\"both_name\"))"
-        ));
+        assert!(rendered.contains("requiredName: Schema.String"));
+        assert!(rendered.contains("optionalName: Schema.UndefinedOr(Schema.String)"));
+        assert!(rendered.contains("nullableName: Schema.NullOr(Schema.String)"));
+        assert!(
+            rendered.contains("bothName: Schema.optionalWith(Schema.String, { nullable: true })")
+        );
     }
 
     #[test]
@@ -669,7 +663,7 @@ mod tests {
     }
 
     #[test]
-    fn render_model_schemas_preserve_snake_case_wire_keys_with_from_key() {
+    fn render_model_schemas_use_wire_keys_for_effect_schema() {
         let mut graph = ApiGraph::new();
         let mut profile = ModelDef::new("UserProfile");
         profile.fields.push(Field::new(
@@ -697,17 +691,11 @@ mod tests {
 
         let rendered = render_model_schemas(&graph).join("\n");
 
-        assert!(rendered.contains(
-            "userId: Schema.propertySignature(Schema.Number).pipe(Schema.fromKey(\"user_id\"))"
-        ));
-        assert!(rendered.contains(
-            "fullName: Schema.propertySignature(Schema.String).pipe(Schema.fromKey(\"full_name\"))"
-        ));
-        assert!(rendered.contains(
-            "quotedKey: Schema.propertySignature(Schema.String).pipe(Schema.fromKey(\"quoted_\\\"key\"))"
-        ));
+        assert!(rendered.contains("userId: Schema.Number"));
+        assert!(rendered.contains("fullName: Schema.String"));
+        assert!(rendered.contains("quotedKey: Schema.String"));
         assert!(rendered.contains("id: Schema.Number"));
-        assert!(!rendered.contains("Schema.fromKey(\"id\")"));
+        assert!(!rendered.contains("Schema.fromKey"));
     }
 
     #[test]
