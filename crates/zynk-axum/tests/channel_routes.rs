@@ -227,3 +227,36 @@ async fn channel_route_unknown_or_non_channel_returns_command_not_found() {
     let body: Value = serde_json::from_str(&body_text(response).await).expect("json error body");
     assert_eq!(body["code"], "COMMAND_NOT_FOUND");
 }
+
+
+#[tokio::test]
+async fn dropping_response_cancels_an_idle_channel_handler() {
+    struct OnDrop(Option<tokio::sync::oneshot::Sender<()>>);
+    impl Drop for OnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.take().unwrap().send(());
+        }
+    }
+    let (finished, cancelled) = tokio::sync::oneshot::channel();
+    let finished = std::sync::Arc::new(std::sync::Mutex::new(Some(finished)));
+    let bridge = zynk_axum::ZynkBridge::new().register_channel(
+        HandlerKey("channel_routes::idle_channel"),
+        move |_payload: Value, channel: zynk_axum::Channel| {
+            let finished = finished.clone();
+            async move {
+                let _guard = OnDrop(finished.lock().unwrap().take());
+                channel.send(json!({"ready": true}))?;
+                std::future::pending::<Result<(), ZynkError>>().await
+            }
+        },
+    );
+    let response = bridge.configure(Router::new()).oneshot(
+        Request::builder().method("POST").uri("/channel/idle_channel")
+            .header("content-type", "application/json").body(Body::from("{}")).unwrap(),
+    ).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+    body.frame().await.unwrap().unwrap();
+    drop(body);
+    tokio::time::timeout(Duration::from_secs(1), cancelled).await.unwrap().unwrap();
+}

@@ -649,6 +649,14 @@ struct ChannelStreamState {
     emitted_terminal: bool,
 }
 
+impl Drop for ChannelStreamState {
+    fn drop(&mut self) {
+        if let Some(task) = self.handler_task.take() {
+            task.abort();
+        }
+    }
+}
+
 async fn next_channel_chunk(
     mut state: ChannelStreamState,
 ) -> Option<(Result<Bytes, Infallible>, ChannelStreamState)> {

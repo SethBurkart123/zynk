@@ -5,6 +5,8 @@
 //! dispatch type-erased handlers, and preserve Zynk's JSON/SSE/WebSocket wire
 //! shapes.
 
+pub mod binary;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
