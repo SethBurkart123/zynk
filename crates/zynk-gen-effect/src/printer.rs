@@ -349,7 +349,7 @@ fn emit_websocket(endpoint: &Endpoint, graph: &ApiGraph) -> String {
             .iter()
             .map(|event| format!(
                 "  {}: {}",
-                event.source_name,
+                lowering::quote_js_string(&event.source_name),
                 type_expr(&event.ty, graph).ts
             ))
             .collect::<Vec<_>>()
@@ -362,7 +362,7 @@ fn emit_websocket(endpoint: &Endpoint, graph: &ApiGraph) -> String {
             .iter()
             .map(|event| format!(
                 "  {}: {}",
-                event.source_name,
+                lowering::quote_js_string(&event.source_name),
                 type_expr(&event.ty, graph).ts
             ))
             .collect::<Vec<_>>()
