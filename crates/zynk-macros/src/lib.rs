@@ -438,7 +438,7 @@ fn param_from_ident_and_type(ident: &syn::Ident, ty: &Type) -> ParamTokens {
     let lowered = lower_type(ty);
     ParamTokens {
         source_name: ident.to_string(),
-        wire_name: zynk_schema::naming::to_camel_case(&ident.to_string()),
+        wire_name: zynk_runtime::zynk_schema::naming::to_camel_case(&ident.to_string()),
         ty: lowered.tokens,
         required: !lowered.optional,
     }
