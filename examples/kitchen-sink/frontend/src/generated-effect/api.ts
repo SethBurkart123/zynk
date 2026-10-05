@@ -400,18 +400,18 @@ export const downloadSampleUrl = (args: { filename?: string }): Effect.Effect<st
 // ============ WebSockets ============
 
 export interface ChatServerEvents {
-  chat_message: ChatMessage
-  status: ServerStatus
-  typing: TypingIndicator
-  user_joined: UserJoined
-  user_left: UserLeft
+  "chat_message": ChatMessage
+  "status": ServerStatus
+  "typing": TypingIndicator
+  "user_joined": UserJoined
+  "user_left": UserLeft
 }
 
 export interface ChatClientEvents {
-  chat_message: ChatMessage
-  join: UserJoined
-  leave: UserLeft
-  typing: TypingIndicator
+  "chat_message": ChatMessage
+  "join": UserJoined
+  "leave": UserLeft
+  "typing": TypingIndicator
 }
 
 export interface ChatSocket {

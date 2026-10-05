@@ -278,7 +278,7 @@ fn lower_literal_value(value: &Value) -> TypeExpr {
     }
 }
 
-fn quote_js_string(value: &str) -> String {
+pub(crate) fn quote_js_string(value: &str) -> String {
     serde_json::to_string(value).expect("serializing a string literal cannot fail")
 }
 

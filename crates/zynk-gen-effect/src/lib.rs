@@ -219,12 +219,62 @@ mod tests {
         assert!(api.contains("assetUrl = (args: { assetId: string }): Promise<string> =>"));
         assert!(api.contains("runPromise(buildStaticUrl(\"asset\", { assetId: args.assetId }))"));
         assert!(api.contains("export interface ChatRoomServerEvents"));
-        assert!(api.contains("  new_message: string"));
+        assert!(api.contains("  \"new_message\": string"));
         assert!(api.contains("export interface ChatRoomClientEvents"));
-        assert!(api.contains("  join_room: string"));
+        assert!(api.contains("  \"join_room\": string"));
         assert!(api.contains("export interface ChatRoomSocket"));
         assert!(api.contains("export const connectChatRoom = (): Effect.Effect<ChatRoomSocket, ZynkNetworkError, ZynkClient> =>"));
         assert!(api.contains("openWebSocket(\"chat_room\")"));
+    }
+
+    #[test]
+    fn websocket_event_keys_preserve_names_as_string_literals() -> () {
+        let cases: &[(&str, &str)] = &[
+            ("ready", r#""ready""#),
+            ("new_message", r#""new_message""#),
+            ("runs.subscribe", r#""runs.subscribe""#),
+            ("runs.unsubscribe", r#""runs.unsubscribe""#),
+            ("run-progress", r#""run-progress""#),
+            ("1st", r#""1st""#),
+            ("quoted\"event", r#""quoted\"event""#),
+            ("back\\slash", r#""back\\slash""#),
+            ("line\nbreak", r#""line\nbreak""#),
+            ("tab\tevent", r#""tab\tevent""#),
+            ("", r#""""#),
+            ("évent", r#""évent""#),
+            ("🚀", r#""🚀""#),
+            ("__proto__", r#""__proto__""#),
+            ("$ready", r#""$ready""#),
+        ];
+        let mut endpoint = Endpoint::new("events", EndpointKind::Ws, TypeRef::void());
+        for &(name, _) in cases {
+            endpoint.server_events.push(Param::new(
+                name,
+                "unusedWireName",
+                TypeRef::primitive("string"),
+                true,
+            ));
+            endpoint.client_events.push(Param::new(
+                name,
+                "unusedWireName",
+                TypeRef::primitive("number"),
+                true,
+            ));
+        }
+        let api = super::generate(&graph_with(vec![endpoint])).files[0]
+            .contents
+            .clone();
+        for (interface, ty) in [("Server", "string"), ("Client", "number")] {
+            let fields = cases
+                .iter()
+                .map(|(_, quoted): &(&str, &str)| -> String { format!("  {quoted}: {ty}") })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(api.contains(&format!(
+                "export interface Events{interface}Events {{\n{fields}\n}}"
+            )));
+        }
+        assert!(!api.contains("unusedWireName"));
     }
 
     fn graph_with(endpoints: Vec<Endpoint>) -> ApiGraph {
