@@ -198,6 +198,8 @@ export interface CallOptions {
   readonly retry?: RetryOptions
   readonly signal?: AbortSignal
   readonly headers?: Readonly<Record<string, string>>
+  // Appended as trailing path segments so DevTools can tell calls to multiplexed commands apart.
+  readonly label?: string
 }
 
 export interface ZynkClientShape extends ZynkClientConfig {
@@ -252,6 +254,9 @@ const joinUrl = (base: string, path: string): string => {
   const trimmedPath = path.startsWith("/") ? path : `/${path}`
   return `${trimmedBase}${trimmedPath}`
 }
+
+const labelPath = (options?: CallOptions): string =>
+  options?.label ? `/${encodeURI(options.label)}` : ""
 
 const linkSignals = (
   caller: AbortSignal | undefined,
@@ -310,7 +315,7 @@ export const callCommand = <A, I>(
 ): Effect.Effect<A, ZynkError, ZynkClient> =>
   Effect.gen(function* () {
     const client = yield* ZynkClient
-    const url = joinUrl(client.baseUrl, `/command/${command}`)
+    const url = joinUrl(client.baseUrl, `/command/${command}`) + labelPath(options)
     const timeout = options?.timeout ?? client.timeout
     const retry = mergeRetry(client.retry, options?.retry)
 
@@ -395,7 +400,7 @@ export const callChannel = <A, I>(
   Stream.unwrap(
     Effect.gen(function* () {
       const client = yield* ZynkClient
-      const url = joinUrl(client.baseUrl, `/channel/${command}`)
+      const url = joinUrl(client.baseUrl, `/channel/${command}`) + labelPath(options)
       const timeout = options?.timeout ?? client.timeout
 
       const open: Effect.Effect<OpenedStream, ZynkError> = Effect.gen(
