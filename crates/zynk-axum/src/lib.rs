@@ -412,6 +412,11 @@ impl ZynkBridge {
         self
     }
 
+    /// Validate `payload` and start channel `name`'s handler for a transport other than the HTTP route.
+    pub fn open_channel(&self, name: &str, payload: Value) -> Result<ChannelStream, ZynkError> {
+        self.state.open_channel(name, payload)
+    }
+
     /// Register Zynk routes on an existing Axum router.
     pub fn configure(self, router: Router) -> Router {
         router
@@ -564,71 +569,27 @@ async fn channel_route(
     Path(name): Path<String>,
     body: Bytes,
 ) -> Response {
-    let Some(endpoint) = state.endpoints.get(&name).copied() else {
-        return command_not_found_response(&name);
+    let stream = match parse_json_body(&body).and_then(|payload| state.open_channel(&name, payload)) {
+        Ok(stream) => stream,
+        Err(error) => return error_response(status_for_error(error.code), error.into_envelope()),
     };
-
-    if endpoint.kind != EndpointKind::Channel {
-        return command_not_found_response(&name);
-    }
-
-    let payload = match parse_json_body(&body) {
-        Ok(payload) => payload,
-        Err(error) => return error_response(StatusCode::BAD_REQUEST, error.into_envelope()),
-    };
-
-    let payload = match validate_params(endpoint.params, payload) {
-        Ok(payload) => payload,
-        Err(error) => return error_response(StatusCode::BAD_REQUEST, error.into_envelope()),
-    };
-
-    let Some(handler_key) = endpoint.handler_key else {
-        return error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            JsonErrorEnvelope::new(
-                INTERNAL_ERROR,
-                "Registered channel is missing a handler key",
-            ),
-        );
-    };
-
-    let Some(handler) = state.channel_handlers.get(&handler_key).cloned() else {
-        return error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            JsonErrorEnvelope::new(
-                INTERNAL_ERROR,
-                format!("No handler registered for channel '{name}'"),
-            ),
-        );
-    };
-
-    let channel_id = next_channel_id();
-    let (sender, receiver) = mpsc::unbounded_channel();
-    let channel = Channel::new(channel_id, sender);
-    let handler_channel = channel.clone();
-    let handler_task = tokio::spawn(async move {
-        match AssertUnwindSafe(handler.call(payload, handler_channel))
-            .catch_unwind()
-            .await
-        {
-            Ok(result) => result,
-            Err(panic) => Err(ZynkError::new(INTERNAL_ERROR, panic_message(panic))),
-        }
+    let keepalive_interval = state.keepalive_interval;
+    let frames = futures::stream::unfold(Some(stream), move |stream| async move {
+        let mut stream = stream?;
+        let terminal = tokio::select! {
+            next = stream.next() => match next {
+                Some(Ok(data)) => return Some((sse_bytes(SseFrame::new("message", data)), Some(stream))),
+                Some(Err(error)) => SseFrame::new("error", json!({ "error": error.message })),
+                None => SseFrame::new("close", json!({ "channelId": stream.channel.id() })),
+            },
+            () = tokio::time::sleep(keepalive_interval) => {
+                return Some((sse_bytes(SseFrame::new("keepalive", json!({}))), Some(stream)));
+            }
+        };
+        Some((sse_bytes(terminal), None))
     });
 
-    let stream = futures::stream::unfold(
-        ChannelStreamState {
-            channel,
-            receiver,
-            handler_task: Some(handler_task),
-            keepalive_interval: state.keepalive_interval,
-            pending_error: None,
-            emitted_terminal: false,
-        },
-        next_channel_chunk,
-    );
-
-    let mut response = Body::from_stream(stream).into_response();
+    let mut response = Body::from_stream(frames).into_response();
     let headers = response.headers_mut();
     headers.insert(
         header::CONTENT_TYPE,
@@ -640,105 +601,110 @@ async fn channel_route(
     response
 }
 
-struct ChannelStreamState {
+fn sse_bytes(frame: SseFrame) -> Result<Bytes, Infallible> {
+    Ok(Bytes::from(frame.encode()))
+}
+
+impl BridgeState {
+    fn open_channel(&self, name: &str, payload: Value) -> Result<ChannelStream, ZynkError> {
+        let endpoint = self
+            .endpoints
+            .get(name)
+            .copied()
+            .filter(|endpoint| endpoint.kind == EndpointKind::Channel)
+            .ok_or_else(|| {
+                ZynkError::with_details(
+                    COMMAND_NOT_FOUND,
+                    format!("Command '{name}' not found"),
+                    json!({ "command": name }),
+                )
+            })?;
+        let payload = validate_params(endpoint.params, payload)?;
+        let handler = endpoint
+            .handler_key
+            .and_then(|key| self.channel_handlers.get(&key).cloned())
+            .ok_or_else(|| {
+                ZynkError::new(
+                    INTERNAL_ERROR,
+                    format!("No handler registered for channel '{name}'"),
+                )
+            })?;
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let channel = Channel::new(next_channel_id(), sender);
+        let handler_channel = channel.clone();
+        let handler_task = tokio::spawn(async move {
+            match AssertUnwindSafe(handler.call(payload, handler_channel))
+                .catch_unwind()
+                .await
+            {
+                Ok(result) => result,
+                Err(panic) => Err(ZynkError::new(INTERNAL_ERROR, panic_message(panic))),
+            }
+        });
+        Ok(ChannelStream {
+            channel,
+            receiver,
+            handler_task: Some(handler_task),
+            error: None,
+        })
+    }
+}
+
+/// A running channel handler's output. Dropping it aborts the handler.
+pub struct ChannelStream {
     channel: Channel,
     receiver: mpsc::UnboundedReceiver<ChannelEvent>,
     handler_task: Option<tokio::task::JoinHandle<Result<(), ZynkError>>>,
-    keepalive_interval: Duration,
-    pending_error: Option<String>,
-    emitted_terminal: bool,
+    error: Option<ZynkError>,
 }
 
-impl Drop for ChannelStreamState {
-    fn drop(&mut self) {
-        if let Some(task) = self.handler_task.take() {
-            task.abort();
-        }
-    }
-}
-
-async fn next_channel_chunk(
-    mut state: ChannelStreamState,
-) -> Option<(Result<Bytes, Infallible>, ChannelStreamState)> {
-    if state.emitted_terminal {
-        return None;
-    }
-
-    loop {
-        if let Some(handler_task) = state.handler_task.as_mut() {
-            tokio::select! {
-                Some(event) = state.receiver.recv() => {
-                    match event {
-                        ChannelEvent::Data(data) => {
-                            return Some((Ok(Bytes::from(SseFrame::new("message", data).encode())), state));
+impl ChannelStream {
+    /// The next item; `None` once the channel closes, or the handler's error after its queued items.
+    pub async fn next(&mut self) -> Option<Result<Value, ZynkError>> {
+        loop {
+            let event = if let Some(handler_task) = self.handler_task.as_mut() {
+                tokio::select! {
+                    Some(event) = self.receiver.recv() => event,
+                    result = handler_task => {
+                        self.handler_task = None;
+                        match result {
+                            Ok(Ok(())) => {
+                                let _ = self.channel.close();
+                            }
+                            Ok(Err(error)) => self.error = Some(error),
+                            Err(error) => {
+                                self.error = Some(ZynkError::new(INTERNAL_ERROR, error.to_string()));
+                            }
                         }
-                        ChannelEvent::Close => {
-                            state.emitted_terminal = true;
-                            let frame = close_frame(state.channel.id());
-                            return Some((Ok(Bytes::from(frame)), state));
-                        }
+                        continue;
                     }
                 }
-                result = handler_task => {
-                    state.handler_task = None;
-                    match result {
-                        Ok(Ok(())) => {
-                            let _ = state.channel.close();
-                            continue;
-                        }
-                        Ok(Err(error)) => {
-                            state.pending_error = Some(error.message);
-                            continue;
-                        }
-                        Err(error) => {
-                            state.pending_error = Some(error.to_string());
-                            continue;
-                        }
-                    }
+            } else {
+                match self.receiver.try_recv() {
+                    Ok(event) => event,
+                    Err(_) => return self.error.take().map(Err),
                 }
-                () = tokio::time::sleep(state.keepalive_interval) => {
-                    return Some((Ok(Bytes::from(SseFrame::new("keepalive", json!({})).encode())), state));
-                }
-            }
-        } else if let Ok(event) = state.receiver.try_recv() {
-            match event {
-                ChannelEvent::Data(data) => {
-                    return Some((
-                        Ok(Bytes::from(SseFrame::new("message", data).encode())),
-                        state,
-                    ));
-                }
+            };
+            return match event {
+                ChannelEvent::Data(data) => Some(Ok(data)),
                 ChannelEvent::Close => {
-                    state.emitted_terminal = true;
-                    let frame = close_frame(state.channel.id());
-                    return Some((Ok(Bytes::from(frame)), state));
+                    if let Some(handler_task) = self.handler_task.take() {
+                        handler_task.abort();
+                    }
+                    self.error = None;
+                    None
                 }
-            }
-        } else if let Some(message) = state.pending_error.take() {
-            state.emitted_terminal = true;
-            let frame = SseFrame::new("error", json!({ "error": message })).encode();
-            return Some((Ok(Bytes::from(frame)), state));
-        } else {
-            match state.receiver.recv().await {
-                Some(ChannelEvent::Data(data)) => {
-                    return Some((
-                        Ok(Bytes::from(SseFrame::new("message", data).encode())),
-                        state,
-                    ));
-                }
-                Some(ChannelEvent::Close) => {
-                    state.emitted_terminal = true;
-                    let frame = close_frame(state.channel.id());
-                    return Some((Ok(Bytes::from(frame)), state));
-                }
-                None => return None,
-            }
+            };
         }
     }
 }
 
-fn close_frame(channel_id: &str) -> String {
-    SseFrame::new("close", json!({ "channelId": channel_id })).encode()
+impl Drop for ChannelStream {
+    fn drop(&mut self) {
+        if let Some(handler_task) = self.handler_task.take() {
+            handler_task.abort();
+        }
+    }
 }
 
 async fn upload_route(
